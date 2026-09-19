@@ -1,0 +1,50 @@
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: workshop_root_pwd
+      MYSQL_DATABASE: workshop
+      MYSQL_USER: workshop_app
+      MYSQL_PASSWORD: workshop_pwd_2026
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -P 3306 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./database/init_complete_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      MYSQL_HOST: db
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: workshop
+      MYSQL_USER: workshop_app
+      MYSQL_PASSWORD: workshop_pwd_2026
+      HTTP_PORT: 8080
+      ALLOWED_ORIGIN: http://localhost:8080
+      TOKEN_SECRET: development_workshop_token_secret_32_bytes_super_secure_key
+      TOKEN_TTL_MINUTE: 480
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+
+volumes:
+  db_data:

@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Production builds
+dist/
+frontend/dist/
+dist-ssr/
+frontend/dist-ssr/
+*.local
+
+# Go binaries and build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+backend/server
+backend/server.exe
+backend/cmd/server/server
+backend/cmd/server/server.exe
+
+# Test coverage
+coverage/
+frontend/coverage/
+*.out
+
+# Environment variables
+.env
+database/.env
+backend/.env
+!.env.example
+!database/.env.example
+!backend/.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS & Editor & AI tool cache
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+.qodo/
