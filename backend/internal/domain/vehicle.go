@@ -38,23 +38,11 @@ func NewVehicle(id, customerID, plate, vin, brand, model string, modelYear int, 
 	if plate == "" {
 		return Vehicle{}, fmt.Errorf("%w: vehicle plate is required", ErrInvalidInput)
 	}
-	if err := EnsureNoHTML("vehicle plate", plate); err != nil {
-		return Vehicle{}, err
-	}
 	if vin == "" {
 		return Vehicle{}, fmt.Errorf("%w: vehicle VIN is required", ErrInvalidInput)
 	}
-	if err := EnsureNoHTML("vehicle VIN", vin); err != nil {
-		return Vehicle{}, err
-	}
 	if brand == "" || model == "" {
 		return Vehicle{}, fmt.Errorf("%w: vehicle brand and model are required", ErrInvalidInput)
-	}
-	if err := EnsureNoHTML("vehicle brand", brand); err != nil {
-		return Vehicle{}, err
-	}
-	if err := EnsureNoHTML("vehicle model", model); err != nil {
-		return Vehicle{}, err
 	}
 	if modelYear < MinimumModelYear {
 		return Vehicle{}, fmt.Errorf("%w: vehicle model year %d is not possible", ErrInvalidInput, modelYear)

@@ -51,7 +51,7 @@ export function CustomerPage() {
           <div className="form-grid">
             <div className="field">
               <label className="field__label" htmlFor="fullName">
-                Nombre
+                Nombre completo
               </label>
               <input
                 className="field__input"

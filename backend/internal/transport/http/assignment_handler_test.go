@@ -49,6 +49,29 @@ func (f *fakeTechnicianStore) FindByUserID(_ context.Context, userID string) (do
 	return f.technician[id], nil
 }
 
+func (f *fakeTechnicianStore) CreateWithAccount(_ context.Context, user domain.User, tech domain.Technician) error {
+	if f.technician == nil {
+		f.technician = make(map[string]domain.Technician)
+	}
+	if f.byUser == nil {
+		f.byUser = make(map[string]string)
+	}
+	f.technician[tech.ID] = tech
+	f.byUser[tech.UserID] = tech.ID
+	return nil
+}
+
+func (f *fakeTechnicianStore) UpdateAccessWithLock(_ context.Context, actorUserID, technicianID string, active bool) (domain.TechnicianWorkload, error) {
+	tech, ok := f.technician[technicianID]
+	if !ok {
+		return domain.TechnicianWorkload{}, domain.ErrNotFound
+	}
+	if tech.UserID == actorUserID {
+		return domain.TechnicianWorkload{}, domain.ErrSelfDeactivation
+	}
+	return domain.TechnicianWorkload{Technician: tech, IsActive: active}, nil
+}
+
 func newAssignmentHandler(t *testing.T, orders *fakeOrderStore, assignments *fakeAssignmentStore) AssignmentHandler {
 	t.Helper()
 	return NewAssignmentHandler(usecase.NewAssignmentUseCase(

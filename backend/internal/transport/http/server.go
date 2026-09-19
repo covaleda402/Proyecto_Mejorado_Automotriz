@@ -47,16 +47,12 @@ func NewServer(dependency Dependency) *http.Server {
 
 	issuer := NewTokenIssuer(settings.TokenSecret, settings.TokenTTL)
 
-	loginRateLimiter := NewLoginRateLimiter(5, 15*time.Minute, now)
-	authHandler := NewAuthHandler(usecase.NewAuthenticateUser(userRepository, issuer, now), loginRateLimiter)
+	limiter := NewLoginRateLimiter()
+	authHandler := NewAuthHandler(usecase.NewAuthenticateUser(userRepository, issuer, now), limiter)
 	customerHandler := NewCustomerHandler(usecase.NewCustomerUseCase(customerRepository, newID, now))
 	vehicleHandler := NewVehicleHandler(usecase.NewVehicleUseCase(vehicleRepository, customerRepository, newID, now))
-	technicianHandler := NewTechnicianHandler(usecase.NewTechnicianUseCase(technicianRepository))
-	orderUseCase := usecase.NewServiceOrderUseCase(
-		orderRepository, vehicleRepository, assignmentRepository,
-		technicianRepository, diagnosticRepository, interventionRepository,
-		newID, now,
-	)
+	technicianHandler := NewTechnicianHandler(usecase.NewTechnicianUseCase(technicianRepository, newID, now))
+	orderUseCase := usecase.NewServiceOrderUseCase(orderRepository, vehicleRepository, assignmentRepository, technicianRepository, newID, now)
 	orderHandler := NewServiceOrderHandler(orderUseCase)
 	assignmentHandler := NewAssignmentHandler(
 		usecase.NewAssignmentUseCase(assignmentRepository, orderRepository, technicianRepository, newID, now),
@@ -80,6 +76,8 @@ func NewServer(dependency Dependency) *http.Server {
 	protected.HandleFunc("POST /api/vehicle", vehicleHandler.Create)
 	protected.HandleFunc("GET /api/vehicle/{vehicleId}/timeline", timelineHandler.Build)
 	protected.HandleFunc("GET /api/technician", technicianHandler.List)
+	protected.HandleFunc("POST /api/technician", technicianHandler.Create)
+	protected.HandleFunc("PATCH /api/technician/{technicianId}/access", technicianHandler.SetAccess)
 	protected.HandleFunc("GET /api/service-order", orderHandler.List)
 	protected.HandleFunc("POST /api/service-order", orderHandler.Create)
 	protected.HandleFunc("GET /api/service-order/{serviceOrderId}", orderHandler.Find)
@@ -96,10 +94,10 @@ func NewServer(dependency Dependency) *http.Server {
 	protected.HandleFunc("GET /api/dashboard", dashboardHandler.Build)
 
 	root := http.NewServeMux()
+	root.HandleFunc("GET /{$}", index)
 	root.HandleFunc("GET /api/health", health)
 	root.HandleFunc("POST /api/session", authHandler.SignIn)
-	root.HandleFunc("POST /api/session/logout", authHandler.SignOut)
-	root.Handle("/api/", authMiddleware(issuer, now)(protected))
+	root.Handle("/api/", authMiddleware(issuer, userRepository, now)(protected))
 
 	return &http.Server{
 		Addr:              ":" + settings.HTTPPort,
@@ -109,6 +107,15 @@ func NewServer(dependency Dependency) *http.Server {
 		WriteTimeout:      settings.RequestTimeout,
 		IdleTimeout:       2 * settings.RequestTimeout,
 	}
+}
+
+func index(writer http.ResponseWriter, _ *http.Request) {
+	respond(writer, http.StatusOK, map[string]string{
+		"service": "Taller Automotriz API",
+		"status":  "online",
+		"version": "3.1-v2",
+		"health":  "/api/health",
+	})
 }
 
 func health(writer http.ResponseWriter, _ *http.Request) {

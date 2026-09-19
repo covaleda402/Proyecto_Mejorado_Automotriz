@@ -10,13 +10,14 @@ import (
 // is released; the storage layer makes that column unique, so a technician can
 // never hold two active orders, not even under a concurrent retry.
 type Assignment struct {
-	ID             string
-	ServiceOrderID string
-	TechnicianID   string
-	IsActive       bool
-	ActiveMarker   *string
-	AssignedAt     time.Time
-	ReleasedAt     *time.Time
+	ID                string
+	ServiceOrderID    string
+	TechnicianID      string
+	IsActive          bool
+	ActiveMarker      *string
+	ActiveOrderMarker *string
+	AssignedAt        time.Time
+	ReleasedAt        *time.Time
 }
 
 // NewAssignment creates an active assignment with its marker set.
@@ -31,13 +32,15 @@ func NewAssignment(id, serviceOrderID, technicianID string, assignedAt time.Time
 		return Assignment{}, fmt.Errorf("%w: the assigned technician is required", ErrInvalidInput)
 	}
 	marker := technicianID
+	orderMarker := serviceOrderID
 	return Assignment{
-		ID:             id,
-		ServiceOrderID: serviceOrderID,
-		TechnicianID:   technicianID,
-		IsActive:       true,
-		ActiveMarker:   &marker,
-		AssignedAt:     assignedAt,
+		ID:                id,
+		ServiceOrderID:    serviceOrderID,
+		TechnicianID:      technicianID,
+		IsActive:          true,
+		ActiveMarker:      &marker,
+		ActiveOrderMarker: &orderMarker,
+		AssignedAt:        assignedAt,
 	}, nil
 }
 
@@ -45,5 +48,6 @@ func NewAssignment(id, serviceOrderID, technicianID string, assignedAt time.Time
 func (a *Assignment) Release(at time.Time) {
 	a.IsActive = false
 	a.ActiveMarker = nil
+	a.ActiveOrderMarker = nil
 	a.ReleasedAt = &at
 }

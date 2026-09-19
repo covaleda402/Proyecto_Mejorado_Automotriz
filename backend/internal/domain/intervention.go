@@ -27,7 +27,6 @@ type Intervention struct {
 	PerformedAt    time.Time
 	CreatedAt      time.Time
 	Part           []PartUsage
-	Warranty       *Warranty
 }
 
 // NewPartUsage builds a part usage after validating its quantity.
@@ -38,9 +37,6 @@ func NewPartUsage(id, interventionID, partName string, quantity int, createdAt t
 	}
 	if partName == "" {
 		return PartUsage{}, fmt.Errorf("%w: the part name is required", ErrInvalidInput)
-	}
-	if err := EnsureNoHTML("part name", partName); err != nil {
-		return PartUsage{}, err
 	}
 	if quantity <= 0 {
 		return PartUsage{}, fmt.Errorf("%w: the part quantity must be greater than zero", ErrInvalidInput)
@@ -54,23 +50,18 @@ func NewPartUsage(id, interventionID, partName string, quantity int, createdAt t
 	}, nil
 }
 
-// NewIntervention creates an intervention performed on a vehicle.
+// NewIntervention builds an intervention with its parts after validating the
+// labor hours and every part quantity.
 func NewIntervention(id, serviceOrderID, technicianID, description string, laborHourCount float64, part []PartUsage, performedAt time.Time) (Intervention, error) {
 	description = strings.TrimSpace(description)
 	if id == "" {
-		return Intervention{}, fmt.Errorf("%w: the intervention identifier is required", ErrInvalidInput)
+		return Intervention{}, fmt.Errorf("%w: intervention identifier is required", ErrInvalidInput)
 	}
-	if serviceOrderID == "" {
-		return Intervention{}, fmt.Errorf("%w: the service order is required", ErrInvalidInput)
-	}
-	if technicianID == "" {
-		return Intervention{}, fmt.Errorf("%w: the technician is required", ErrInvalidInput)
+	if serviceOrderID == "" || technicianID == "" {
+		return Intervention{}, fmt.Errorf("%w: the service order and the technician are required", ErrInvalidInput)
 	}
 	if description == "" {
 		return Intervention{}, fmt.Errorf("%w: the intervention description is required", ErrInvalidInput)
-	}
-	if err := EnsureNoHTML("intervention description", description); err != nil {
-		return Intervention{}, err
 	}
 	if laborHourCount <= 0 {
 		return Intervention{}, fmt.Errorf("%w: the labor hour count must be greater than zero", ErrInvalidInput)

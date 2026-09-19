@@ -13,12 +13,18 @@ import (
 const serviceOrderColumn = "id, order_number, vehicle_id, reported_failure, status, received_at, created_at, updated_at"
 
 const serviceOrderSummarySelect = "SELECT so.id, so.order_number, so.vehicle_id, so.reported_failure, so.status, " +
-	"so.received_at, so.created_at, so.updated_at, v.plate, COALESCE(u.full_name, '') " +
+	"so.received_at, so.created_at, so.updated_at, v.plate, " +
+	"COALESCE((" +
+	"    SELECT u2.full_name " +
+	"    FROM assignment a2 " +
+	"    JOIN technician t2 ON t2.id = a2.technician_id " +
+	"    JOIN `user` u2 ON u2.id = t2.user_id " +
+	"    WHERE a2.service_order_id = so.id " +
+	"    ORDER BY a2.is_active DESC, a2.assigned_at DESC " +
+	"    LIMIT 1" +
+	"), '') AS technician_name " +
 	"FROM service_order so " +
-	"JOIN vehicle v ON v.id = so.vehicle_id " +
-	"LEFT JOIN assignment a ON a.service_order_id = so.id AND a.is_active = 1 " +
-	"LEFT JOIN technician t ON t.id = a.technician_id " +
-	"LEFT JOIN `user` u ON u.id = t.user_id"
+	"JOIN vehicle v ON v.id = so.vehicle_id"
 
 // ServiceOrderRepository persists service orders and their status history.
 type ServiceOrderRepository struct {
@@ -82,32 +88,6 @@ func (r ServiceOrderRepository) List(ctx context.Context, status string) ([]usec
 	}
 	defer func() { _ = rows.Close() }()
 
-	return r.scanSummaries(rows)
-}
-
-// ListByTechnicianUser returns the orders assigned to a specific technician user.
-func (r ServiceOrderRepository) ListByTechnicianUser(ctx context.Context, userID, status string) ([]usecase.ServiceOrderSummary, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, r.timeout)
-	defer cancel()
-
-	query := serviceOrderSummarySelect + " WHERE t.user_id = ? AND a.is_active = 1"
-	argument := []any{userID}
-	if status != "" {
-		query += " AND so.status = ?"
-		argument = append(argument, status)
-	}
-	query += " ORDER BY so.received_at DESC"
-
-	rows, err := r.database.QueryContext(queryCtx, query, argument...)
-	if err != nil {
-		return nil, translate(err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	return r.scanSummaries(rows)
-}
-
-func (r ServiceOrderRepository) scanSummaries(rows *sql.Rows) ([]usecase.ServiceOrderSummary, error) {
 	listed := make([]usecase.ServiceOrderSummary, 0)
 	for rows.Next() {
 		var summary usecase.ServiceOrderSummary
@@ -196,8 +176,7 @@ func (r ServiceOrderRepository) ListTransition(ctx context.Context, serviceOrder
 
 	rows, err := r.database.QueryContext(
 		queryCtx,
-		"SELECT st.id, st.service_order_id, st.from_status, st.to_status, "+
-			"st.changed_by_user_id, COALESCE(u.full_name, ''), st.changed_at "+
+		"SELECT st.id, st.service_order_id, st.from_status, st.to_status, st.changed_by_user_id, COALESCE(u.full_name, ''), st.changed_at "+
 			"FROM status_transition st "+
 			"LEFT JOIN `user` u ON u.id = st.changed_by_user_id "+
 			"WHERE st.service_order_id = ? ORDER BY st.changed_at ASC, st.id ASC",
@@ -214,7 +193,7 @@ func (r ServiceOrderRepository) ListTransition(ctx context.Context, serviceOrder
 		var from, to string
 		if err := rows.Scan(
 			&transition.ID, &transition.ServiceOrderID, &from, &to,
-			&transition.ChangedByUserID, &transition.ChangedByFullName, &transition.ChangedAt,
+			&transition.ChangedByUserID, &transition.ChangedByName, &transition.ChangedAt,
 		); err != nil {
 			return nil, translate(err)
 		}
@@ -262,4 +241,21 @@ func (r ServiceOrderRepository) NextOrderNumber(ctx context.Context) (string, er
 		return "", translate(err)
 	}
 	return fmt.Sprintf("OS-%04d", count+1), nil
+}
+
+// FindActiveAssignmentTechnician returns the technician ID currently assigned to the order.
+func (r ServiceOrderRepository) FindActiveAssignmentTechnician(ctx context.Context, orderID string) (string, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+
+	var technicianID string
+	err := r.database.QueryRowContext(
+		queryCtx,
+		"SELECT technician_id FROM assignment WHERE service_order_id = ? AND is_active = 1",
+		orderID,
+	).Scan(&technicianID)
+	if err != nil {
+		return "", translate(err)
+	}
+	return technicianID, nil
 }

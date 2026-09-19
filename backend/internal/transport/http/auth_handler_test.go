@@ -51,9 +51,11 @@ func (f *fakeUserStore) FindByID(_ context.Context, id string) (domain.User, err
 
 func signIn(t *testing.T, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	limiter := NewLoginRateLimiter()
+	defer limiter.Close()
 	handler := NewAuthHandler(usecase.NewAuthenticateUser(
 		newFakeUserStore(t, "admin", "Admin2026"), testIssuer(), testClock(),
-	), nil)
+	), limiter)
 	request := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(body))
 	recorder := httptest.NewRecorder()
 	handler.SignIn(recorder, request)
@@ -118,37 +120,14 @@ func TestSignInNeverReturnsThePasswordHash(t *testing.T) {
 	}
 }
 
-func TestSignInSetsSessionCookie(t *testing.T) {
-	recorder := signIn(t, `{"username":"admin","password":"Admin2026"}`)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", recorder.Code)
-	}
-	cookie := recorder.Result().Cookies()
-	var sessionCookie *http.Cookie
-	for _, c := range cookie {
-		if c.Name == "session" {
-			sessionCookie = c
-			break
-		}
-	}
-	if sessionCookie == nil {
-		t.Fatal("expected session cookie to be set")
-	}
-	if !sessionCookie.HttpOnly {
-		t.Fatal("session cookie must be HttpOnly")
-	}
-	if sessionCookie.Value == "" {
-		t.Fatal("session cookie value must not be empty")
-	}
-}
-
-func TestSignInRateLimiterBlocksAfterFiveFailedAttempts(t *testing.T) {
-	limiter := NewLoginRateLimiter(5, 15*time.Minute, testClock())
+func TestSignInRateLimiterBlocksAfter5Failures(t *testing.T) {
+	limiter := NewLoginRateLimiter()
+	defer limiter.Close()
 	handler := NewAuthHandler(usecase.NewAuthenticateUser(
 		newFakeUserStore(t, "admin", "Admin2026"), testIssuer(), testClock(),
 	), limiter)
 
-	// 5 failed attempts allowed
+	// Perform 5 failed attempts
 	for i := 1; i <= 5; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"username":"admin","password":"wrong"}`))
 		rec := httptest.NewRecorder()
@@ -158,19 +137,82 @@ func TestSignInRateLimiterBlocksAfterFiveFailedAttempts(t *testing.T) {
 		}
 	}
 
-	// 6th attempt should be blocked with 429 Too Many Requests
+	// 6th attempt must be blocked with 429
 	req := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"username":"admin","password":"wrong"}`))
 	rec := httptest.NewRecorder()
 	handler.SignIn(rec, req)
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("6th attempt must be blocked with 429, got %d", rec.Code)
-	}
 
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("6th attempt must return 429 Too Many Requests, got %d", rec.Code)
+	}
+	if retryAfter := rec.Header().Get("Retry-After"); retryAfter == "" {
+		t.Fatalf("429 response must contain Retry-After header")
+	}
 	var payload errorPayload
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode error payload: %v", err)
+		t.Fatalf("expected errorPayload: %v", err)
 	}
-	if payload.Code != "too_many_requests" {
-		t.Fatalf("expected code too_many_requests, got %q", payload.Code)
+	if payload.Code != "rate_limit_exceeded" {
+		t.Fatalf("expected code 'rate_limit_exceeded', got %q", payload.Code)
+	}
+}
+
+func TestSignInResetOnSuccess(t *testing.T) {
+	limiter := NewLoginRateLimiter()
+	defer limiter.Close()
+	handler := NewAuthHandler(usecase.NewAuthenticateUser(
+		newFakeUserStore(t, "admin", "Admin2026"), testIssuer(), testClock(),
+	), limiter)
+
+	// Perform 4 failed attempts
+	for i := 1; i <= 4; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+		rec := httptest.NewRecorder()
+		handler.SignIn(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d should return 401, got %d", i, rec.Code)
+		}
+	}
+
+	// Successful login resets counters
+	reqOk := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"username":"admin","password":"Admin2026"}`))
+	recOk := httptest.NewRecorder()
+	handler.SignIn(recOk, reqOk)
+	if recOk.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", recOk.Code)
+	}
+
+	// Another failed login should be 401 (not blocked)
+	req := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+	rec := httptest.NewRecorder()
+	handler.SignIn(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("after reset, attempt should return 401, got %d", rec.Code)
+	}
+}
+
+func TestSignInMalformedBodyDoesNotConsumeRateLimit(t *testing.T) {
+	limiter := NewLoginRateLimiter()
+	defer limiter.Close()
+	handler := NewAuthHandler(usecase.NewAuthenticateUser(
+		newFakeUserStore(t, "admin", "Admin2026"), testIssuer(), testClock(),
+	), limiter)
+
+	// Send 5 malformed bodies
+	for i := 1; i <= 5; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader("bad-json"))
+		rec := httptest.NewRecorder()
+		handler.SignIn(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("malformed request should return 400, got %d", rec.Code)
+		}
+	}
+
+	// Subsequent valid credential attempt should succeed 200
+	req := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"username":"admin","password":"Admin2026"}`))
+	rec := httptest.NewRecorder()
+	handler.SignIn(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("attempt after malformed requests should be allowed (200), got %d", rec.Code)
 	}
 }

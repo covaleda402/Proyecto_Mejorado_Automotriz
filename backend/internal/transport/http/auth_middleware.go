@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -20,31 +21,43 @@ type caller struct {
 	Role   domain.Role
 }
 
-// authMiddleware rejects a request without a valid session token and puts the
-// caller identity in the context for the handlers to read.
-func authMiddleware(issuer TokenIssuer, now func() time.Time) func(http.Handler) http.Handler {
+// userReader is the narrow port the middleware needs to check server-side account active state.
+type userReader interface {
+	FindByID(ctx context.Context, id string) (domain.User, error)
+}
+
+// authMiddleware rejects a request without a valid session token, verifies that the account
+// is still active in the database (BR-ACTIVE-02), and enforces Fail-Closed policy on DB errors.
+func authMiddleware(issuer TokenIssuer, users userReader, now func() time.Time) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			token := ""
-			if cookie, err := request.Cookie("session"); err == nil && cookie.Value != "" {
-				token = cookie.Value
-			}
-			if token == "" {
-				header := request.Header.Get("Authorization")
-				if strings.HasPrefix(header, "Bearer ") {
-					token = strings.TrimPrefix(header, "Bearer ")
-				}
-			}
-			if token == "" {
+			header := request.Header.Get("Authorization")
+			if !strings.HasPrefix(header, "Bearer ") {
 				failure(writer, domain.ErrUnauthorized)
 				return
 			}
-			claim, err := issuer.Verify(token, now())
+			claim, err := issuer.Verify(strings.TrimPrefix(header, "Bearer "), now())
 			if err != nil {
 				failure(writer, domain.ErrUnauthorized)
 				return
 			}
-			identity := caller{UserID: claim.UserID, Role: domain.Role(claim.Role)}
+
+			// BR-ACTIVE-02: Server-side check against primary store with Fail-Closed semantics
+			user, err := users.FindByID(request.Context(), claim.UserID)
+			if err != nil {
+				if errors.Is(err, domain.ErrNotFound) {
+					failure(writer, domain.ErrAccountInactive)
+					return
+				}
+				failure(writer, domain.ErrAuthorizationStateUnavailable)
+				return
+			}
+			if !user.IsActive {
+				failure(writer, domain.ErrAccountInactive)
+				return
+			}
+
+			identity := caller{UserID: user.ID, Role: user.Role}
 			next.ServeHTTP(writer, request.WithContext(
 				context.WithValue(request.Context(), callerContextKey, identity),
 			))

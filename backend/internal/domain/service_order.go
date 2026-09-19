@@ -38,6 +38,15 @@ func (s ServiceOrderStatus) Valid() bool {
 	return known
 }
 
+// Next returns the next lifecycle status and reports whether one exists.
+func (s ServiceOrderStatus) Next() (ServiceOrderStatus, bool) {
+	candidates, ok := allowedTransition[s]
+	if !ok || len(candidates) == 0 {
+		return "", false
+	}
+	return candidates[0], true
+}
+
 // CanMoveTo reports whether the lifecycle allows moving to the next status.
 func (s ServiceOrderStatus) CanMoveTo(next ServiceOrderStatus) bool {
 	for _, candidate := range allowedTransition[s] {
@@ -51,6 +60,29 @@ func (s ServiceOrderStatus) CanMoveTo(next ServiceOrderStatus) bool {
 // IsOpen reports whether the order still occupies the workshop.
 func (s ServiceOrderStatus) IsOpen() bool {
 	return s != StatusDelivered
+}
+
+// CanAddDiagnostic reports whether a diagnostic evaluation can be attached to the order.
+// Only allowed if status is RECEIVED or IN_DIAGNOSIS.
+func (s ServiceOrderStatus) CanAddDiagnostic() bool {
+	return s == StatusReceived || s == StatusInDiagnosis
+}
+
+// CanAddIntervention reports whether a repair intervention can be recorded.
+// Only allowed if status is IN_DIAGNOSIS or IN_REPAIR.
+func (s ServiceOrderStatus) CanAddIntervention() bool {
+	return s == StatusInDiagnosis || s == StatusInRepair
+}
+
+// CanAssignTechnician reports whether a technician can be assigned or reassigned.
+// Only allowed if status is not DELIVERED.
+func (s ServiceOrderStatus) CanAssignTechnician() bool {
+	return s != StatusDelivered
+}
+
+// IsOperational reports whether the order is currently being actively worked on.
+func (s ServiceOrderStatus) IsOperational() bool {
+	return s == StatusInDiagnosis || s == StatusInRepair
 }
 
 // ServiceOrder is the work order opened at check-in for one vehicle.
@@ -68,13 +100,13 @@ type ServiceOrder struct {
 // StatusTransition is the audit record of one status change. It is always
 // written in the same transaction as the change it describes.
 type StatusTransition struct {
-	ID                string
-	ServiceOrderID    string
-	FromStatus        ServiceOrderStatus
-	ToStatus          ServiceOrderStatus
-	ChangedByUserID   string
-	ChangedByFullName string
-	ChangedAt         time.Time
+	ID              string
+	ServiceOrderID  string
+	FromStatus      ServiceOrderStatus
+	ToStatus        ServiceOrderStatus
+	ChangedByUserID string
+	ChangedByName   string
+	ChangedAt       time.Time
 }
 
 // NewServiceOrder opens a service order in RECEIVED status.
@@ -92,9 +124,6 @@ func NewServiceOrder(id, orderNumber, vehicleID, reportedFailure string, receive
 	}
 	if reportedFailure == "" {
 		return ServiceOrder{}, fmt.Errorf("%w: the reported failure is required", ErrInvalidInput)
-	}
-	if err := EnsureNoHTML("reported failure", reportedFailure); err != nil {
-		return ServiceOrder{}, err
 	}
 	return ServiceOrder{
 		ID:              id,
@@ -131,4 +160,24 @@ func (o *ServiceOrder) MoveTo(next ServiceOrderStatus, transitionID, changedByUs
 	o.Status = next
 	o.UpdatedAt = at
 	return transition, nil
+}
+
+// CanAddDiagnostic reports whether a diagnostic evaluation can be attached to the order.
+func (o ServiceOrder) CanAddDiagnostic() bool {
+	return o.Status.CanAddDiagnostic()
+}
+
+// CanAddIntervention reports whether a repair intervention can be recorded.
+func (o ServiceOrder) CanAddIntervention() bool {
+	return o.Status.CanAddIntervention()
+}
+
+// CanAssignTechnician reports whether a technician can be assigned or reassigned.
+func (o ServiceOrder) CanAssignTechnician() bool {
+	return o.Status.CanAssignTechnician()
+}
+
+// IsOperational reports whether the order is currently being actively worked on.
+func (o ServiceOrder) IsOperational() bool {
+	return o.Status.IsOperational()
 }

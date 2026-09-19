@@ -17,9 +17,10 @@ const VALID_WARRANTY = {
 };
 
 function storeSession() {
-  window.sessionStorage.setItem(
+  window.localStorage.setItem(
     'workshop.session',
     JSON.stringify({
+      token: 'a-token',
       expiresAt: new Date(Date.now() + 3600000).toISOString(),
       userId: 'user-1',
       username: 'admin',

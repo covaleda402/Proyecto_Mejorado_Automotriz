@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -24,43 +25,48 @@ type Config struct {
 
 // Load reads the configuration and fails when a required variable is absent.
 func Load() (Config, error) {
-	loadDotEnv(".env")
-	loadDotEnv("../backend/.env")
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = os.Getenv("MYSQL_URL")
+	}
+	if dsn != "" {
+		dsn = normalizeDSN(dsn)
+	} else {
+		host, err := required("MYSQL_HOST")
+		if err != nil {
+			return Config{}, err
+		}
+		port, err := required("MYSQL_PORT")
+		if err != nil {
+			return Config{}, err
+		}
+		database, err := required("MYSQL_DATABASE")
+		if err != nil {
+			return Config{}, err
+		}
+		user, err := required("MYSQL_USER")
+		if err != nil {
+			return Config{}, err
+		}
+		password, err := required("MYSQL_PASSWORD")
+		if err != nil {
+			return Config{}, err
+		}
+		dsn = fmt.Sprintf(
+			"%s:%s@tcp(%s)/%s?parseTime=true&charset=utf8mb4&loc=UTC",
+			user, password, net.JoinHostPort(host, port), database,
+		)
+	}
 
-	host, err := required("MYSQL_HOST")
-	if err != nil {
-		return Config{}, err
-	}
-	port, err := required("MYSQL_PORT")
-	if err != nil {
-		return Config{}, err
-	}
-	database, err := required("MYSQL_DATABASE")
-	if err != nil {
-		return Config{}, err
-	}
-	user, err := required("MYSQL_USER")
-	if err != nil {
-		return Config{}, err
-	}
-	password, err := required("MYSQL_PASSWORD")
-	if err != nil {
-		return Config{}, err
-	}
 	secret, err := required("TOKEN_SECRET")
 	if err != nil {
 		return Config{}, err
 	}
-	origin, err := required("ALLOWED_ORIGIN")
-	if err != nil {
-		return Config{}, err
-	}
+	origin := optional("ALLOWED_ORIGIN", "*")
+
 	return Config{
-		DatabaseDSN: fmt.Sprintf(
-			"%s:%s@tcp(%s)/%s?parseTime=true&charset=utf8mb4&loc=UTC",
-			user, password, net.JoinHostPort(host, port), database,
-		),
-		HTTPPort:        optional("HTTP_PORT", "8080"),
+		DatabaseDSN:     dsn,
+		HTTPPort:        optional("PORT", optional("HTTP_PORT", "8080")),
 		AllowedOrigin:   origin,
 		TokenSecret:     secret,
 		TokenTTL:        minuteDuration("TOKEN_TTL_MINUTE", 480),
@@ -100,24 +106,34 @@ func positiveNumber(name string, fallback int) int {
 	return parsed
 }
 
-func loadDotEnv(filePath string) {
-	content, err := os.ReadFile(filePath)
+// normalizeDSN converts standard cloud connection strings (mysql://user:pass@host:port/db)
+// into the format expected by go-sql-driver/mysql (user:pass@tcp(host:port)/db?params).
+func normalizeDSN(raw string) string {
+	if !strings.HasPrefix(raw, "mysql://") {
+		return raw
+	}
+	u, err := url.Parse(raw)
 	if err != nil {
-		return
+		return raw
 	}
-	for _, line := range strings.Split(string(content), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			val := strings.TrimSpace(parts[1])
-			if os.Getenv(key) == "" {
-				os.Setenv(key, val)
-			}
-		}
+	user := u.User.Username()
+	password, _ := u.User.Password()
+	host := u.Host
+	dbName := strings.TrimPrefix(u.Path, "/")
+	query := u.Query()
+	if query.Get("parseTime") == "" {
+		query.Set("parseTime", "true")
 	}
+	if query.Get("charset") == "" {
+		query.Set("charset", "utf8mb4")
+	}
+	if query.Get("loc") == "" {
+		query.Set("loc", "UTC")
+	}
+	if query.Get("tls") == "" {
+		query.Set("tls", "true")
+	}
+	// TiDB Cloud uses ?ssl-mode=REQUIRED, but Go driver uses tls=true
+	query.Del("ssl-mode")
+	return fmt.Sprintf("%s:%s@tcp(%s)/%s?%s", user, password, host, dbName, query.Encode())
 }
-

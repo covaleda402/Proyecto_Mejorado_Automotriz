@@ -28,26 +28,14 @@ func NewCustomer(id, fullName, documentNumber, phone, email string, createdAt ti
 	if fullName == "" {
 		return Customer{}, fmt.Errorf("%w: customer name is required", ErrInvalidInput)
 	}
-	if err := EnsureNoHTML("customer name", fullName); err != nil {
-		return Customer{}, err
-	}
 	if documentNumber == "" {
 		return Customer{}, fmt.Errorf("%w: customer document number is required", ErrInvalidInput)
-	}
-	if err := EnsureNoHTML("customer document number", documentNumber); err != nil {
-		return Customer{}, err
 	}
 	if phone == "" {
 		return Customer{}, fmt.Errorf("%w: customer phone is required", ErrInvalidInput)
 	}
-	if err := EnsureNoHTML("customer phone", phone); err != nil {
-		return Customer{}, err
-	}
 	if !strings.Contains(email, "@") || strings.HasPrefix(email, "@") || strings.HasSuffix(email, "@") {
 		return Customer{}, fmt.Errorf("%w: customer email is not a valid address", ErrInvalidInput)
-	}
-	if err := EnsureNoHTML("customer email", email); err != nil {
-		return Customer{}, err
 	}
 	return Customer{
 		ID:             id,

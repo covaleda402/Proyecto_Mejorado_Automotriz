@@ -8,7 +8,7 @@ import (
 	"workshop/internal/domain"
 )
 
-const userColumn = "id, username, password_hash, role, full_name, created_at"
+const userColumn = "id, username, password_hash, role, full_name, is_active, created_at"
 
 // UserRepository reads user accounts for authentication.
 type UserRepository struct {
@@ -37,12 +37,14 @@ func (r UserRepository) findBy(ctx context.Context, query string, argument any) 
 
 	var user domain.User
 	var role string
+	var isActive int
 	err := r.database.QueryRowContext(queryCtx, query, argument).Scan(
-		&user.ID, &user.Username, &user.PasswordHash, &role, &user.FullName, &user.CreatedAt,
+		&user.ID, &user.Username, &user.PasswordHash, &role, &user.FullName, &isActive, &user.CreatedAt,
 	)
 	if err != nil {
 		return domain.User{}, translate(err)
 	}
 	user.Role = domain.Role(role)
+	user.IsActive = isActive == 1
 	return user, nil
 }

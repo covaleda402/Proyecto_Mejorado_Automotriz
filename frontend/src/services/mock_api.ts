@@ -21,7 +21,7 @@ import type { Dashboard } from './dashboard_service';
 import type { Timeline, TimelineEntry } from './timeline_service';
 import type { Session } from './session_service';
 
-const DB_KEY = 'workshop.demo.db.v1';
+const DB_KEY = 'workshop.demo.db.v2';
 
 interface MockDatabase {
   customers: Customer[];
@@ -83,7 +83,9 @@ function getInitialData(): MockDatabase {
     userId: '22222222-2222-4222-8222-222222222222',
     fullName: 'Juan Perez',
     specialty: 'Motor y transmision',
+    isActive: true,
     busy: true,
+    canReceiveAssignment: false,
     activeOrderId: 'o1000000-0000-4000-8000-000000000001',
     activeOrderNumber: 'OS-0001',
     activeVehiclePlate: 'ABC123',
@@ -94,7 +96,9 @@ function getInitialData(): MockDatabase {
     userId: '33333333-3333-4333-8333-333333333333',
     fullName: 'Laura Ramirez',
     specialty: 'Frenos y suspension',
+    isActive: true,
     busy: false,
+    canReceiveAssignment: true,
     activeOrderId: '',
     activeOrderNumber: '',
     activeVehiclePlate: '',
@@ -442,31 +446,80 @@ export function setupBrowserMockApi(): void {
     }
 
     // 5. Technicians (Administrator only)
-    if (pathname === '/api/technician' && method === 'GET') {
+    if (pathname === '/api/technician') {
       if (isCallerTechnician) {
         return errorResponse(403, 'forbidden', 'No tiene permiso para ver la lista de tecnicos.');
       }
-      const updatedTechnicians = db.technicians.map((tech) => {
-        const activeAssignment = db.assignments.find((a) => a.technicianId === tech.id && a.isActive);
-        if (activeAssignment) {
-          const relatedOrder = db.orders.find((o) => o.id === activeAssignment.serviceOrderId);
+      if (method === 'GET') {
+        const updatedTechnicians = db.technicians.map((tech) => {
+          const isActive = tech.isActive !== false;
+          const activeAssignment = db.assignments.find((a) => a.technicianId === tech.id && a.isActive);
+          const busy = Boolean(activeAssignment);
+          const canReceiveAssignment = isActive && !busy;
+          if (activeAssignment) {
+            const relatedOrder = db.orders.find((o) => o.id === activeAssignment.serviceOrderId);
+            return {
+              ...tech,
+              isActive,
+              busy: true,
+              canReceiveAssignment,
+              activeOrderId: relatedOrder?.id || '',
+              activeOrderNumber: relatedOrder?.orderNumber || '',
+              activeVehiclePlate: relatedOrder?.vehiclePlate || '',
+            };
+          }
           return {
             ...tech,
-            busy: true,
-            activeOrderId: relatedOrder?.id || '',
-            activeOrderNumber: relatedOrder?.orderNumber || '',
-            activeVehiclePlate: relatedOrder?.vehiclePlate || '',
+            isActive,
+            busy: false,
+            canReceiveAssignment,
+            activeOrderId: '',
+            activeOrderNumber: '',
+            activeVehiclePlate: '',
           };
+        });
+        return jsonResponse(updatedTechnicians);
+      }
+      if (method === 'POST') {
+        const { fullName, username, password, specialty } = body || {};
+        if (!fullName || !username || !password || !specialty) {
+          return errorResponse(400, 'bad_request', 'Todos los campos son obligatorios.');
         }
-        return {
-          ...tech,
+        const newTech: Technician = {
+          id: crypto.randomUUID ? crypto.randomUUID() : 't-' + Date.now(),
+          userId: crypto.randomUUID ? crypto.randomUUID() : 'u-' + Date.now(),
+          fullName,
+          specialty,
+          isActive: true,
           busy: false,
+          canReceiveAssignment: true,
           activeOrderId: '',
           activeOrderNumber: '',
           activeVehiclePlate: '',
         };
-      });
-      return jsonResponse(updatedTechnicians);
+        db.technicians.push(newTech);
+        saveDB(db);
+        return jsonResponse(newTech, 201);
+      }
+    }
+
+    const techAccessMatch = pathname.match(/^\/api\/technician\/([^/]+)\/access$/);
+    if (techAccessMatch && method === 'PATCH') {
+      if (isCallerTechnician) {
+        return errorResponse(403, 'forbidden', 'Solo el administrador puede modificar el acceso de tecnicos.');
+      }
+      const technicianId = techAccessMatch[1];
+      const tech = db.technicians.find((t) => t.id === technicianId);
+      if (!tech) {
+        return errorResponse(404, 'not_found', 'Tecnico no encontrado.');
+      }
+      const active = Boolean(body?.active);
+      tech.isActive = active;
+      const activeAssignment = db.assignments.find((a) => a.technicianId === tech.id && a.isActive);
+      tech.busy = Boolean(activeAssignment);
+      tech.canReceiveAssignment = active && !tech.busy;
+      saveDB(db);
+      return jsonResponse(tech);
     }
 
     // 6. Service Orders List & Create
@@ -527,15 +580,39 @@ export function setupBrowserMockApi(): void {
       if (!order) {
         return errorResponse(404, 'not_found', 'Orden no encontrada.');
       }
+      const activeAss = db.assignments.find((a) => a.serviceOrderId === orderId && a.isActive);
+      const assignedTech = activeAss ? db.technicians.find((t) => t.id === activeAss.technicianId) : null;
       if (isCallerTechnician && callerTechId) {
-        const isAssigned = db.assignments.some(
-          (a) => a.serviceOrderId === orderId && a.technicianId === callerTechId && a.isActive,
-        );
+        const isAssigned = activeAss && activeAss.technicianId === callerTechId;
         if (!isAssigned) {
           return errorResponse(403, 'forbidden', 'Esta orden no esta asignada a su usuario.');
         }
       }
-      return jsonResponse(order);
+
+      const isAssigned = Boolean(activeAss);
+      const isTechActive = assignedTech ? assignedTech.isActive !== false : true;
+      const isAssignedToCaller = Boolean(activeAss && activeAss.technicianId === callerTechId);
+      const isDelivered = order.status === 'DELIVERED';
+
+      const permissions = {
+        canAdvance: !isDelivered && (
+          isCallerAdmin
+            ? (order.status === 'RECEIVED' ? isAssigned && isTechActive : true)
+            : (isAssignedToCaller && isTechActive)
+        ),
+        canAddDiagnostic: !isDelivered && isAssignedToCaller && isTechActive && order.status === 'IN_DIAGNOSIS' && !db.diagnostics.some((d) => d.serviceOrderId === orderId),
+        canAddIntervention: !isDelivered && isAssignedToCaller && isTechActive && order.status === 'IN_REPAIR',
+        canAssign: !isDelivered && isCallerAdmin,
+      };
+
+      const enrichedOrder = {
+        ...order,
+        assignedTechnicianId: activeAss?.technicianId || '',
+        technicianIsActive: isTechActive,
+        permissions,
+      };
+
+      return jsonResponse(enrichedOrder);
     }
 
     // 8. Service Order Status Advance
@@ -683,7 +760,22 @@ export function setupBrowserMockApi(): void {
     if (interventionMatch) {
       const orderId = interventionMatch[1];
       if (method === 'GET') {
-        const list = db.interventions.filter((i) => i.serviceOrderId === orderId);
+        const list = db.interventions
+          .filter((i) => i.serviceOrderId === orderId)
+          .map((item) => {
+            const war = db.warranties.find((w) => w.interventionId === item.id);
+            return {
+              ...item,
+              warranty: war
+                ? {
+                    id: war.id,
+                    valid: war.valid,
+                    kind: war.kind,
+                    coverageMonthCount: war.coverageMonthCount,
+                  }
+                : null,
+            };
+          });
         return jsonResponse(list);
       }
       if (method === 'POST') {

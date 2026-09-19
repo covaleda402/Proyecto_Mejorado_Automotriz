@@ -58,15 +58,7 @@ func (h DiagnosticHandler) Record(writer http.ResponseWriter, request *http.Requ
 
 // Find returns the diagnostic of an order.
 func (h DiagnosticHandler) Find(writer http.ResponseWriter, request *http.Request) {
-	identity, err := callerFrom(request.Context())
-	if err != nil {
-		failure(writer, err)
-		return
-	}
-	found, err := h.diagnostic.FindByServiceOrder(
-		request.Context(), request.PathValue("serviceOrderId"),
-		identity.UserID, identity.Role,
-	)
+	found, err := h.diagnostic.FindByServiceOrder(request.Context(), request.PathValue("serviceOrderId"))
 	if err != nil {
 		failure(writer, err)
 		return

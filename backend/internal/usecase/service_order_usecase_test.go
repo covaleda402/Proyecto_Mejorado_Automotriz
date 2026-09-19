@@ -44,58 +44,11 @@ func (f *fakeVehicleRepository) FindByID(_ context.Context, id string) (usecase.
 	return found, nil
 }
 
-type fakeTechnicianRepo struct{}
-
-func (f fakeTechnicianRepo) FindByID(_ context.Context, id string) (domain.Technician, error) {
-	return domain.Technician{ID: id}, nil
-}
-
-func (f fakeTechnicianRepo) FindByUserID(_ context.Context, userID string) (domain.Technician, error) {
-	return domain.Technician{ID: "technician-1", UserID: userID}, nil
-}
-
-func (f fakeTechnicianRepo) ListWorkload(_ context.Context) ([]domain.TechnicianWorkload, error) {
-	return nil, nil
-}
-
-type fakeDiagnosticRepo struct{}
-
-func (f fakeDiagnosticRepo) Save(_ context.Context, _ domain.Diagnostic) error { return nil }
-func (f fakeDiagnosticRepo) FindByServiceOrder(_ context.Context, _ string) (domain.Diagnostic, error) {
-	return domain.Diagnostic{ID: "diag-1"}, nil
-}
-func (f fakeDiagnosticRepo) ListByVehicle(_ context.Context, _ string) ([]domain.Diagnostic, error) {
-	return nil, nil
-}
-
-type fakeInterventionRepo struct{}
-
-func (f fakeInterventionRepo) Save(_ context.Context, _ domain.Intervention) error { return nil }
-func (f fakeInterventionRepo) FindByID(_ context.Context, _ string) (domain.Intervention, error) {
-	return domain.Intervention{}, nil
-}
-func (f fakeInterventionRepo) ListByServiceOrder(_ context.Context, _ string) ([]domain.Intervention, error) {
-	return []domain.Intervention{{ID: "int-1"}}, nil
-}
-func (f fakeInterventionRepo) ListByVehicle(_ context.Context, _ string) ([]domain.Intervention, error) {
-	return nil, nil
-}
-
-func newOrderUseCase(
-	orders usecase.ServiceOrderRepository,
-	vehicles usecase.VehicleRepository,
-	assignments usecase.AssignmentRepository,
-) usecase.ServiceOrderUseCase {
-	return usecase.NewServiceOrderUseCase(
-		orders, vehicles, assignments,
-		fakeTechnicianRepo{}, fakeDiagnosticRepo{}, fakeInterventionRepo{},
-		sequentialID(), fixedClock(),
-	)
-}
-
 func TestOpenCreatesTheOrderInReceivedStatus(t *testing.T) {
 	orders := newFakeOrderRepository()
-	useCase := newOrderUseCase(orders, newFakeVehicleRepository("vehicle-1"), &fakeAssignmentRepository{})
+	useCase := usecase.NewServiceOrderUseCase(
+		orders, newFakeVehicleRepository("vehicle-1"), &fakeAssignmentRepository{}, newFakeTechnicianRepository(), sequentialID(), fixedClock(),
+	)
 
 	order, err := useCase.Open(context.Background(), "vehicle-1", "Ruido en el motor")
 	if err != nil {
@@ -110,29 +63,21 @@ func TestOpenCreatesTheOrderInReceivedStatus(t *testing.T) {
 }
 
 func TestOpenRejectsAnUnknownVehicle(t *testing.T) {
-	useCase := newOrderUseCase(newFakeOrderRepository(), newFakeVehicleRepository("vehicle-1"), &fakeAssignmentRepository{})
+	useCase := usecase.NewServiceOrderUseCase(
+		newFakeOrderRepository(), newFakeVehicleRepository("vehicle-1"), &fakeAssignmentRepository{}, newFakeTechnicianRepository(), sequentialID(), fixedClock(),
+	)
 	if _, err := useCase.Open(context.Background(), "vehicle-9", "Ruido"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("an unknown vehicle must be rejected as not found, got %v", err)
 	}
 }
 
-func TestOpenRejectsDuplicateActiveOrderForVehicle(t *testing.T) {
-	activeOrder := buildOrder(t, "order-active", "OS-0001")
-	orders := newFakeOrderRepository(activeOrder)
-	orders.order["order-active"] = activeOrder
-
-	useCase := newOrderUseCase(orders, newFakeVehicleRepository("vehicle-1"), &fakeAssignmentRepository{})
-	// Save active order in repository map
-	if _, err := useCase.Open(context.Background(), "vehicle-1", "Ruido"); err == nil {
-		// If fake order repo ListByVehicle returns orders, it should reject
-	}
-}
-
 func TestAdvanceRejectsAnOutOfLifecycleMoveAndWritesNothing(t *testing.T) {
 	orders := newFakeOrderRepository(buildOrder(t, "order-1", "OS-0001"))
-	useCase := newOrderUseCase(orders, newFakeVehicleRepository("vehicle-1"), &fakeAssignmentRepository{})
+	useCase := usecase.NewServiceOrderUseCase(
+		orders, newFakeVehicleRepository("vehicle-1"), &fakeAssignmentRepository{}, newFakeTechnicianRepository(), sequentialID(), fixedClock(),
+	)
 
-	_, err := useCase.Advance(context.Background(), "order-1", domain.StatusReady, "user-1", domain.RoleAdministrator)
+	_, err := useCase.Advance(context.Background(), "order-1", domain.StatusReady, domain.RoleAdministrator, "user-1")
 	if !errors.Is(err, domain.ErrInvalidTransition) {
 		t.Fatalf("moving from RECEIVED to READY must be rejected, got %v", err)
 	}
@@ -147,9 +92,19 @@ func TestAdvanceRejectsAnOutOfLifecycleMoveAndWritesNothing(t *testing.T) {
 
 func TestAdvanceWritesTheTransitionRecordWithItsAuthor(t *testing.T) {
 	orders := newFakeOrderRepository(buildOrder(t, "order-1", "OS-0001"))
-	useCase := newOrderUseCase(orders, newFakeVehicleRepository("vehicle-1"), &fakeAssignmentRepository{})
+	assignments := &fakeAssignmentRepository{}
+	assignment, err := domain.NewAssignment("assignment-1", "order-1", "technician-1", fixedClock()())
+	if err != nil {
+		t.Fatalf("building assignment fixture failed: %v", err)
+	}
+	if err := assignments.Save(context.Background(), assignment); err != nil {
+		t.Fatalf("saving assignment fixture failed: %v", err)
+	}
+	useCase := usecase.NewServiceOrderUseCase(
+		orders, newFakeVehicleRepository("vehicle-1"), assignments, newFakeTechnicianRepository(), sequentialID(), fixedClock(),
+	)
 
-	if _, err := useCase.Advance(context.Background(), "order-1", domain.StatusInDiagnosis, "user-1", domain.RoleAdministrator); err != nil {
+	if _, err := useCase.Advance(context.Background(), "order-1", domain.StatusInDiagnosis, domain.RoleAdministrator, "user-1"); err != nil {
 		t.Fatalf("moving from RECEIVED to IN_DIAGNOSIS must be accepted: %v", err)
 	}
 	history, _ := orders.ListTransition(context.Background(), "order-1")
@@ -176,9 +131,11 @@ func TestAdvanceToDeliveredReleasesTheTechnician(t *testing.T) {
 	if err := assignments.Save(context.Background(), assignment); err != nil {
 		t.Fatalf("storing the assignment fixture failed: %v", err)
 	}
-	useCase := newOrderUseCase(orders, newFakeVehicleRepository("vehicle-1"), assignments)
+	useCase := usecase.NewServiceOrderUseCase(
+		orders, newFakeVehicleRepository("vehicle-1"), assignments, newFakeTechnicianRepository(), sequentialID(), fixedClock(),
+	)
 
-	if _, err := useCase.Advance(context.Background(), "order-1", domain.StatusDelivered, "user-1", domain.RoleAdministrator); err != nil {
+	if _, err := useCase.Advance(context.Background(), "order-1", domain.StatusDelivered, domain.RoleAdministrator, "user-1"); err != nil {
 		t.Fatalf("moving from READY to DELIVERED must be accepted: %v", err)
 	}
 	if assignments.released != 1 {
@@ -186,5 +143,81 @@ func TestAdvanceToDeliveredReleasesTheTechnician(t *testing.T) {
 	}
 	if _, err := assignments.FindActiveByTechnician(context.Background(), "technician-1"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("the technician must be free after delivery, got %v", err)
+	}
+}
+
+func TestAdvanceByTechnicianValidatesAssignment(t *testing.T) {
+	order := buildOrder(t, "order-1", "OS-0001")
+	orders := newFakeOrderRepository(order)
+	tech, _ := domain.NewTechnician("technician-1", "user-tech-1", "Mecanica", fixedClock()())
+	techRepo := newFakeTechnicianRepository(tech)
+	assignments := &fakeAssignmentRepository{}
+
+	useCase := usecase.NewServiceOrderUseCase(
+		orders, newFakeVehicleRepository("vehicle-1"), assignments, techRepo, sequentialID(), fixedClock(),
+	)
+
+	// Case 1: Technician has no active assignment on the order -> forbidden
+	_, err := useCase.Advance(context.Background(), "order-1", domain.StatusInDiagnosis, domain.RoleTechnician, "user-tech-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden when tech has no assignment, got %v", err)
+	}
+
+	// Case 2: Unknown technician user -> forbidden
+	_, err = useCase.Advance(context.Background(), "order-1", domain.StatusInDiagnosis, domain.RoleTechnician, "unknown-user")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden for unknown technician user, got %v", err)
+	}
+
+	// Case 3: Assign technician to order and advance -> allowed
+	assignment, _ := domain.NewAssignment("assignment-1", "order-1", "technician-1", fixedClock()())
+	_ = assignments.Save(context.Background(), assignment)
+
+	advanced, err := useCase.Advance(context.Background(), "order-1", domain.StatusInDiagnosis, domain.RoleTechnician, "user-tech-1")
+	if err != nil {
+		t.Fatalf("expected Advance to succeed for assigned technician, got %v", err)
+	}
+	if advanced.Status != domain.StatusInDiagnosis {
+		t.Fatalf("expected order to be IN_DIAGNOSIS, got %s", advanced.Status)
+	}
+}
+
+func TestFindDetailReturnsEnrichedOrderAndPermissions(t *testing.T) {
+	order := buildOrder(t, "order-1", "OS-0001")
+	orders := newFakeOrderRepository(order)
+	tech, _ := domain.NewTechnician("technician-1", "user-tech-1", "Mecanica", fixedClock()())
+	techRepo := newFakeTechnicianRepository(tech)
+	assignments := &fakeAssignmentRepository{}
+	assignment, _ := domain.NewAssignment("assignment-1", "order-1", "technician-1", fixedClock()())
+	_ = assignments.Save(context.Background(), assignment)
+
+	useCase := usecase.NewServiceOrderUseCase(
+		orders, newFakeVehicleRepository("vehicle-1"), assignments, techRepo, sequentialID(), fixedClock(),
+	)
+
+	// Detail as Admin
+	foundOrder, vehicle, techName, permissions, _, err := useCase.FindDetail(
+		context.Background(), "order-1", domain.RoleAdministrator, "admin-1",
+	)
+	if err != nil {
+		t.Fatalf("FindDetail must succeed, got %v", err)
+	}
+	if foundOrder.ID != "order-1" || vehicle.ID != "vehicle-1" {
+		t.Fatalf("FindDetail returned unexpected order or vehicle: %+v, %+v", foundOrder, vehicle)
+	}
+	_ = techName
+	if !permissions.CanAdvance {
+		t.Fatalf("Admin should have CanAdvance true for RECEIVED order")
+	}
+
+	// Detail as Assigned Technician
+	_, _, _, techPerms, _, err := useCase.FindDetail(
+		context.Background(), "order-1", domain.RoleTechnician, "user-tech-1",
+	)
+	if err != nil {
+		t.Fatalf("FindDetail for technician must succeed, got %v", err)
+	}
+	if !techPerms.CanAddDiagnostic {
+		t.Fatalf("Assigned technician should have CanAddDiagnostic true for RECEIVED order")
 	}
 }

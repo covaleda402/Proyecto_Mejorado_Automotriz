@@ -79,64 +79,13 @@ func (r InterventionRepository) FindByID(ctx context.Context, id string) (domain
 	return intervention, nil
 }
 
-// ListByServiceOrder reads the interventions of an order, oldest first, with their warranty if issued.
+// ListByServiceOrder reads the interventions of an order, oldest first.
 func (r InterventionRepository) ListByServiceOrder(ctx context.Context, serviceOrderID string) ([]domain.Intervention, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, r.timeout)
-	defer cancel()
-
-	rows, err := r.database.QueryContext(
-		queryCtx,
-		"SELECT i.id, i.service_order_id, i.technician_id, i.description, i.labor_hour_count, "+
-			"i.performed_at, i.created_at, "+
-			"COALESCE(w.id, ''), COALESCE(w.warranty_kind, ''), COALESCE(w.coverage_month_count, 0), "+
-			"w.issued_at, w.expiration_date "+
-			"FROM intervention i "+
-			"LEFT JOIN warranty w ON w.intervention_id = i.id "+
-			"WHERE i.service_order_id = ? ORDER BY i.performed_at",
+	return r.list(
+		ctx,
+		"SELECT "+interventionColumn+" FROM intervention WHERE service_order_id = ? ORDER BY performed_at",
 		serviceOrderID,
 	)
-	if err != nil {
-		return nil, translate(err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	listed := make([]domain.Intervention, 0)
-	for rows.Next() {
-		var intervention domain.Intervention
-		var wID, wKind string
-		var wMonths int
-		var wIssuedAt, wExpiration sql.NullTime
-		if err := rows.Scan(
-			&intervention.ID, &intervention.ServiceOrderID, &intervention.TechnicianID,
-			&intervention.Description, &intervention.LaborHourCount,
-			&intervention.PerformedAt, &intervention.CreatedAt,
-			&wID, &wKind, &wMonths, &wIssuedAt, &wExpiration,
-		); err != nil {
-			return nil, translate(err)
-		}
-		if wID != "" {
-			intervention.Warranty = &domain.Warranty{
-				ID:                 wID,
-				InterventionID:     intervention.ID,
-				Kind:               domain.WarrantyKind(wKind),
-				CoverageMonthCount: wMonths,
-				IssuedAt:           wIssuedAt.Time,
-				ExpirationDate:     wExpiration.Time,
-			}
-		}
-		listed = append(listed, intervention)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, translate(err)
-	}
-	for index := range listed {
-		part, err := r.listPart(queryCtx, listed[index].ID)
-		if err != nil {
-			return nil, err
-		}
-		listed[index].Part = part
-	}
-	return listed, nil
 }
 
 // ListByVehicle reads every intervention of a vehicle for the timeline.

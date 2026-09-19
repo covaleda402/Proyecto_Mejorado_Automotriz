@@ -44,10 +44,6 @@ func (f *fakeOrderStore) List(_ context.Context, _ string) ([]usecase.ServiceOrd
 	return nil, nil
 }
 
-func (f *fakeOrderStore) ListByTechnicianUser(_ context.Context, _, _ string) ([]usecase.ServiceOrderSummary, error) {
-	return nil, nil
-}
-
 func (f *fakeOrderStore) ListByVehicle(_ context.Context, _ string) ([]domain.ServiceOrder, error) {
 	return nil, nil
 }
@@ -123,6 +119,15 @@ func (f *fakeAssignmentStore) FindActiveByTechnician(_ context.Context, technici
 	return domain.Assignment{}, domain.ErrNotFound
 }
 
+func (f *fakeAssignmentStore) FindLatestByServiceOrder(_ context.Context, serviceOrderID string) (domain.Assignment, error) {
+	for i := len(f.assignment) - 1; i >= 0; i-- {
+		if f.assignment[i].ServiceOrderID == serviceOrderID {
+			return f.assignment[i], nil
+		}
+	}
+	return domain.Assignment{}, domain.ErrNotFound
+}
+
 func (f *fakeAssignmentStore) ReleaseByServiceOrder(_ context.Context, serviceOrderID string, releasedAt time.Time) error {
 	for index := range f.assignment {
 		if f.assignment[index].ServiceOrderID == serviceOrderID && f.assignment[index].IsActive {
@@ -149,47 +154,13 @@ func asCaller(request *http.Request, role domain.Role) *http.Request {
 	))
 }
 
-type fakeOrderTechStore struct{}
-
-func (f fakeOrderTechStore) FindByID(_ context.Context, id string) (domain.Technician, error) {
-	return domain.Technician{ID: id}, nil
-}
-
-func (f fakeOrderTechStore) FindByUserID(_ context.Context, userID string) (domain.Technician, error) {
-	return domain.Technician{ID: "tech-1", UserID: userID}, nil
-}
-
-func (f fakeOrderTechStore) ListWorkload(_ context.Context) ([]domain.TechnicianWorkload, error) {
-	return nil, nil
-}
-
-type fakeOrderDiagStore struct{}
-
-func (f fakeOrderDiagStore) Save(_ context.Context, _ domain.Diagnostic) error { return nil }
-func (f fakeOrderDiagStore) FindByServiceOrder(_ context.Context, _ string) (domain.Diagnostic, error) {
-	return domain.Diagnostic{}, nil
-}
-func (f fakeOrderDiagStore) ListByVehicle(_ context.Context, _ string) ([]domain.Diagnostic, error) {
-	return nil, nil
-}
-
-type fakeOrderInterventionStore struct{}
-
-func (f fakeOrderInterventionStore) Save(_ context.Context, _ domain.Intervention) error { return nil }
-func (f fakeOrderInterventionStore) FindByID(_ context.Context, _ string) (domain.Intervention, error) {
-	return domain.Intervention{}, nil
-}
-func (f fakeOrderInterventionStore) ListByServiceOrder(_ context.Context, _ string) ([]domain.Intervention, error) {
-	return []domain.Intervention{{ID: "int-1"}}, nil
-}
-func (f fakeOrderInterventionStore) ListByVehicle(_ context.Context, _ string) ([]domain.Intervention, error) {
-	return nil, nil
-}
-
 func newOrderHandler(orders *fakeOrderStore) ServiceOrderHandler {
+	return newOrderHandlerWithAssignment(orders, &fakeAssignmentStore{})
+}
+
+func newOrderHandlerWithAssignment(orders *fakeOrderStore, assignments usecase.AssignmentRepository) ServiceOrderHandler {
 	return NewServiceOrderHandler(usecase.NewServiceOrderUseCase(
-		orders, newFakeVehicleStore("vehicle-1"), &fakeAssignmentStore{},
-		fakeOrderTechStore{}, fakeOrderDiagStore{}, fakeOrderInterventionStore{},
+		orders, newFakeVehicleStore("vehicle-1"), assignments, &fakeTechnicianStore{},
 		func() string { return "generated-id" }, testClock(),
 	))
 }
@@ -259,7 +230,10 @@ func TestAdvanceOutOfLifecycleAnswersUnprocessableInSpanish(t *testing.T) {
 
 func TestAdvanceWithinTheLifecycleAnswersTheNewStatus(t *testing.T) {
 	orders := newFakeOrderStore(orderFixture(t, "order-1", domain.StatusReceived))
-	handler := newOrderHandler(orders)
+	assignments := &fakeAssignmentStore{}
+	asg, _ := domain.NewAssignment("asg-1", "order-1", "tech-1", testMoment)
+	_ = assignments.Save(context.Background(), asg)
+	handler := newOrderHandlerWithAssignment(orders, assignments)
 	request := asCaller(httptest.NewRequest(
 		http.MethodPost, "/api/service-order/order-1/status", strings.NewReader(`{"status":"IN_DIAGNOSIS"}`),
 	), domain.RoleAdministrator)
@@ -288,3 +262,58 @@ func TestFindServiceOrderAnswersNotFoundForAnUnknownIdentifier(t *testing.T) {
 		t.Fatalf("an unknown order must answer 404, got %d", recorder.Code)
 	}
 }
+
+func TestFindServiceOrderReturnsEnrichedPermissions(t *testing.T) {
+	orders := newFakeOrderStore(orderFixture(t, "order-1", domain.StatusReceived))
+	assignments := &fakeAssignmentStore{}
+	asg, _ := domain.NewAssignment("asg-1", "order-1", "tech-1", testMoment)
+	_ = assignments.Save(context.Background(), asg)
+	handler := newOrderHandlerWithAssignment(orders, assignments)
+	request := asCaller(httptest.NewRequest(http.MethodGet, "/api/service-order/order-1", nil), domain.RoleAdministrator)
+	request.SetPathValue("serviceOrderId", "order-1")
+	recorder := httptest.NewRecorder()
+
+	handler.Find(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("finding an order must answer 200, got %d body %s", recorder.Code, recorder.Body.String())
+	}
+	var payload serviceOrderResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("the response must be a service order payload: %v", err)
+	}
+	if payload.Permissions == nil || !payload.Permissions.CanAdvance {
+		t.Fatalf("the response must include permissions with CanAdvance=true, got %+v", payload.Permissions)
+	}
+}
+
+func TestFindServiceOrderIsForbiddenForUnassignedTechnician(t *testing.T) {
+	orders := newFakeOrderStore(orderFixture(t, "order-1", domain.StatusReceived))
+	assignments := &fakeAssignmentStore{}
+	// Order is assigned to tech-1
+	asg, _ := domain.NewAssignment("asg-1", "order-1", "tech-1", testMoment)
+	_ = assignments.Save(context.Background(), asg)
+
+	// Caller is technician with user-2, which maps to tech-2
+	techStore := newFakeTechnicianStore(t, "tech-2", "user-2")
+	useCase := usecase.NewServiceOrderUseCase(
+		orders, newFakeVehicleStore("vehicle-1"), assignments, techStore,
+		func() string { return "id" }, testClock(),
+	)
+	handler := NewServiceOrderHandler(useCase)
+
+	request := asCaller(httptest.NewRequest(http.MethodGet, "/api/service-order/order-1", nil), domain.RoleTechnician)
+	// Override caller user ID to user-2
+	request = request.WithContext(context.WithValue(
+		request.Context(), callerContextKey, caller{UserID: "user-2", Role: domain.RoleTechnician},
+	))
+	request.SetPathValue("serviceOrderId", "order-1")
+	recorder := httptest.NewRecorder()
+
+	handler.Find(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("unassigned technician must receive 403 Forbidden, got %d", recorder.Code)
+	}
+}
+

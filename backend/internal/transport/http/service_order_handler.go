@@ -20,15 +20,18 @@ type advanceStatusRequest struct {
 
 // serviceOrderResponse is one row of the order table and the order detail.
 type serviceOrderResponse struct {
-	ID              string `json:"id"`
-	OrderNumber     string `json:"orderNumber"`
-	VehicleID       string `json:"vehicleId"`
-	VehiclePlate    string `json:"vehiclePlate"`
-	TechnicianName  string `json:"technicianName"`
-	ReportedFailure string `json:"reportedFailure"`
-	Status          string `json:"status"`
-	ReceivedAt      string `json:"receivedAt"`
-	UpdatedAt       string `json:"updatedAt"`
+	ID                   string                   `json:"id"`
+	OrderNumber          string                   `json:"orderNumber"`
+	VehicleID            string                   `json:"vehicleId"`
+	VehiclePlate         string                   `json:"vehiclePlate"`
+	TechnicianName       string                   `json:"technicianName"`
+	AssignedTechnicianID string                   `json:"assignedTechnicianId,omitempty"`
+	TechnicianIsActive   *bool                    `json:"technicianIsActive,omitempty"`
+	ReportedFailure      string                   `json:"reportedFailure"`
+	Status               string                   `json:"status"`
+	ReceivedAt           string                   `json:"receivedAt"`
+	UpdatedAt            string                   `json:"updatedAt"`
+	Permissions          *domain.OrderPermissions `json:"permissions,omitempty"`
 }
 
 // statusTransitionResponse is one row of the status history panel.
@@ -70,14 +73,14 @@ func (h ServiceOrderHandler) Create(writer http.ResponseWriter, request *http.Re
 	respond(writer, http.StatusCreated, toServiceOrderResponse(created, "", ""))
 }
 
-// List returns the orders, optionally filtered by status.
+// List returns the orders, optionally filtered by status and caller identity.
 func (h ServiceOrderHandler) List(writer http.ResponseWriter, request *http.Request) {
 	identity, err := callerFrom(request.Context())
 	if err != nil {
 		failure(writer, err)
 		return
 	}
-	listed, err := h.order.List(request.Context(), request.URL.Query().Get("status"), identity.UserID, identity.Role)
+	listed, err := h.order.List(request.Context(), request.URL.Query().Get("status"), identity.Role, identity.UserID)
 	if err != nil {
 		failure(writer, err)
 		return
@@ -96,12 +99,20 @@ func (h ServiceOrderHandler) Find(writer http.ResponseWriter, request *http.Requ
 		failure(writer, err)
 		return
 	}
-	order, err := h.order.Find(request.Context(), request.PathValue("serviceOrderId"), identity.UserID, identity.Role)
+	order, vehicle, technicianName, permissions, techIsActive, err := h.order.FindDetail(
+		request.Context(), request.PathValue("serviceOrderId"), identity.Role, identity.UserID,
+	)
 	if err != nil {
 		failure(writer, err)
 		return
 	}
-	respond(writer, http.StatusOK, toServiceOrderResponse(order, "", ""))
+	resp := toServiceOrderResponse(order, vehicle.Plate, technicianName)
+	resp.Permissions = &permissions
+	resp.TechnicianIsActive = techIsActive
+	if active, err := h.order.FindActiveAssignment(request.Context(), order.ID); err == nil {
+		resp.AssignedTechnicianID = active.TechnicianID
+	}
+	respond(writer, http.StatusOK, resp)
 }
 
 // ListTransition returns the status history of an order.
@@ -118,7 +129,7 @@ func (h ServiceOrderHandler) ListTransition(writer http.ResponseWriter, request 
 			FromStatus:      string(item.FromStatus),
 			ToStatus:        string(item.ToStatus),
 			ChangedByUserID: item.ChangedByUserID,
-			ChangedByName:   item.ChangedByFullName,
+			ChangedByName:   item.ChangedByName,
 			ChangedAt:       formatTime(item.ChangedAt),
 		})
 	}
@@ -141,8 +152,8 @@ func (h ServiceOrderHandler) Advance(writer http.ResponseWriter, request *http.R
 		request.Context(),
 		request.PathValue("serviceOrderId"),
 		domain.ServiceOrderStatus(payload.Status),
-		identity.UserID,
 		identity.Role,
+		identity.UserID,
 	)
 	if err != nil {
 		failure(writer, err)

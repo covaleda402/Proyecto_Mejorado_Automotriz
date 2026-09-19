@@ -19,14 +19,44 @@ body {
   padding: var(--space-3) var(--space-4);
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-4);
-  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.app-header__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .app-header__brand {
   font-size: var(--font-size-section);
-  font-weight: 600;
+  font-weight: 700;
   margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.app-header__menu-toggle {
+  display: none;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  font-size: 1.25rem;
+  border-radius: 6px;
+  width: 42px;
+  height: 42px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+
+.app-header__menu-toggle:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .app-header__nav {
@@ -37,13 +67,15 @@ body {
 }
 
 .app-header__link {
-  color: var(--color-brand-contrast);
+  color: rgba(255, 255, 255, 0.9);
   text-decoration: none;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-card);
   min-height: var(--touch-target);
   display: inline-flex;
   align-items: center;
+  font-weight: 500;
+  transition: background 0.15s ease;
 }
 
 .app-header__link:hover {
@@ -52,13 +84,18 @@ body {
 
 .app-header__link--active {
   background: var(--color-brand-dark);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .app-header__user {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+
+.app-header__username {
+  font-weight: 500;
+  font-size: 0.95rem;
 }
 
 .app-main {
@@ -69,7 +106,8 @@ body {
 
 .screen-title {
   font-size: var(--font-size-screen);
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   margin: 0 0 var(--space-4) 0;
 }
 
@@ -91,11 +129,14 @@ body {
 .grid {
   display: grid;
   gap: var(--space-3);
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
 .table-scroll {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--radius-card);
+  box-shadow: inset 0 0 0 1px var(--color-border);
 }
 
 .login-layout {
@@ -109,4 +150,99 @@ body {
 .login-card {
   width: 100%;
   max-width: 400px;
+}
+
+/* Mobile responsive adaptions */
+@media (max-width: 768px) {
+  .app-header {
+    flex-direction: column;
+    align-items: stretch;
+    padding: var(--space-2) var(--space-3);
+    gap: 0;
+  }
+
+  .app-header__bar {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .app-header__brand {
+    font-size: 1.15rem;
+  }
+
+  .app-header__menu-toggle {
+    display: inline-flex;
+  }
+
+  .app-header__nav {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: var(--space-2);
+    margin-top: var(--space-2);
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  .app-header__nav--open {
+    display: flex;
+  }
+
+  .app-header__link {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 1rem;
+  }
+
+  .app-header__user {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+    padding-top: var(--space-2);
+    margin-top: var(--space-2);
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  .app-header__user--open {
+    display: flex;
+  }
+
+  .app-header__logout {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .app-main {
+    padding: var(--space-3) var(--space-2);
+  }
+
+  .screen-title {
+    font-size: 1.4rem;
+    margin-bottom: var(--space-3);
+  }
+
+  .card {
+    padding: var(--space-3);
+    border-radius: 10px;
+    margin-bottom: var(--space-3);
+  }
+
+  .card__title {
+    font-size: 1.1rem;
+  }
+
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-2);
+  }
+
+  form .button,
+  .card > .button {
+    width: 100%;
+    justify-content: center;
+  }
 }

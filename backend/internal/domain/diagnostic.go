@@ -30,14 +30,8 @@ func NewDiagnostic(id, serviceOrderID, technicianID, finding, componentToRepair 
 	if finding == "" {
 		return Diagnostic{}, fmt.Errorf("%w: the diagnostic finding is required", ErrInvalidInput)
 	}
-	if err := EnsureNoHTML("diagnostic finding", finding); err != nil {
-		return Diagnostic{}, err
-	}
 	if componentToRepair == "" {
 		return Diagnostic{}, fmt.Errorf("%w: the component to repair is required", ErrInvalidInput)
-	}
-	if err := EnsureNoHTML("component to repair", componentToRepair); err != nil {
-		return Diagnostic{}, err
 	}
 	return Diagnostic{
 		ID:                id,

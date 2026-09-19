@@ -54,12 +54,7 @@ func (h AssignmentHandler) Assign(writer http.ResponseWriter, request *http.Requ
 
 // Find returns the technician currently holding the order.
 func (h AssignmentHandler) Find(writer http.ResponseWriter, request *http.Request) {
-	identity, err := callerFrom(request.Context())
-	if err != nil {
-		failure(writer, err)
-		return
-	}
-	assignment, err := h.assignment.FindActive(request.Context(), request.PathValue("serviceOrderId"), identity.UserID, identity.Role)
+	assignment, err := h.assignment.FindActive(request.Context(), request.PathValue("serviceOrderId"))
 	if err != nil {
 		failure(writer, err)
 		return

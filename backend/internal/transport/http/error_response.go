@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -9,23 +10,37 @@ import (
 )
 
 // errorPayload is the only error shape the API returns. The message is written
-// in Spanish because the end user reads it; it never carries a driver message,
-// a stack trace or an internal identifier.
+// in Spanish because the end user reads it.
 type errorPayload struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Detail  string `json:"detail,omitempty"`
 }
 
 // failure maps a domain error to a status code and a sanitized Spanish
-// message. An error the domain does not declare becomes a generic 500, so an
-// unexpected internal failure never reaches the client as text.
+// message.
 func failure(writer http.ResponseWriter, err error) {
 	status, code, message := classify(err)
-	respond(writer, status, errorPayload{Code: code, Message: message})
+	log.Printf("[API ERROR] status=%d code=%s: %v", status, code, err)
+	detail := ""
+	if err != nil {
+		detail = err.Error()
+	}
+	respond(writer, status, errorPayload{Code: code, Message: message, Detail: detail})
 }
 
 func classify(err error) (int, string, string) {
 	switch {
+	case errors.Is(err, domain.ErrAccountInactive):
+		return http.StatusUnauthorized, "account_inactive", "La cuenta de usuario ha sido desactivada por el administrador."
+	case errors.Is(err, domain.ErrAuthorizationStateUnavailable):
+		return http.StatusServiceUnavailable, "authorization_unavailable", "El servicio de autorizacion no esta disponible temporalmente. Intente mas tarde."
+	case errors.Is(err, domain.ErrSelfDeactivation):
+		return http.StatusForbidden, "self_deactivation_forbidden", "Un administrador no puede revocar el acceso a su propia cuenta."
+	case errors.Is(err, domain.ErrLastAdministrator):
+		return http.StatusForbidden, "last_admin_forbidden", "No se puede desactivar al unico administrador activo del sistema."
+	case errors.Is(err, domain.ErrTechnicianInactive):
+		return http.StatusUnprocessableEntity, "technician_inactive", "El tecnico se encuentra inactivo y no puede recibir ordenes de servicio."
 	case errors.Is(err, domain.ErrUnauthorized):
 		return http.StatusUnauthorized, "unauthorized", "Usuario o contrasena incorrectos."
 	case errors.Is(err, domain.ErrForbidden):
@@ -36,10 +51,10 @@ func classify(err error) (int, string, string) {
 		return http.StatusConflict, "conflict", conflictMessage(err)
 	case errors.Is(err, domain.ErrInvalidTransition):
 		return http.StatusUnprocessableEntity, "invalid_transition", "Transicion de estado no permitida."
+	case errors.Is(err, domain.ErrTechnicianRequired):
+		return http.StatusUnprocessableEntity, "technician_required", "Se requiere asignar un tecnico responsable antes de iniciar el diagnostico o reparacion."
 	case errors.Is(err, domain.ErrInvalidInput):
 		return http.StatusBadRequest, "invalid_input", invalidInputMessage(err)
-	case errors.Is(err, domain.ErrTooManyRequests):
-		return http.StatusTooManyRequests, "too_many_requests", "Demasiados intentos fallidos. Por favor intente mas tarde."
 	default:
 		return http.StatusInternalServerError, "internal_error", "Ocurrio un error inesperado. Intente de nuevo."
 	}
@@ -50,9 +65,11 @@ func classify(err error) (int, string, string) {
 func conflictMessage(err error) string {
 	text := err.Error()
 	switch {
-	case strings.Contains(text, "technician already holds"):
+	case strings.Contains(text, "username") || strings.Contains(text, "uq_user_username"):
+		return "El nombre de usuario ya se encuentra registrado."
+	case strings.Contains(text, "technician already holds") || strings.Contains(text, "uq_assignment_active_marker"):
 		return "El tecnico ya tiene una orden activa."
-	case strings.Contains(text, "already has an active technician"):
+	case strings.Contains(text, "already has an active technician") || strings.Contains(text, "uq_assignment_active_order_marker"):
 		return "La orden ya tiene un tecnico asignado."
 	default:
 		return "El registro ya existe o entra en conflicto con otro."

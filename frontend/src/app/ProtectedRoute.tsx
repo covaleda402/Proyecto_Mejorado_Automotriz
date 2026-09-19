@@ -4,18 +4,21 @@ import type { ReactNode } from 'react';
 
 import { useSession } from '../shared/SessionContext';
 
-interface ProtectedRouteProps {
+export interface ProtectedRouteProps {
   children: ReactNode;
-  administratorOnly?: boolean;
+  requiredRole?: 'ADMINISTRATOR' | 'TECHNICIAN';
 }
 
-export function ProtectedRoute({ children, administratorOnly = false }: ProtectedRouteProps) {
+export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
   const { session, isAdministrator } = useSession();
   if (!session) {
     return <Navigate to="/login" replace />;
   }
-  if (administratorOnly && !isAdministrator) {
-    return <Navigate to="/service-orders" replace />;
+  if (requiredRole === 'ADMINISTRATOR' && !isAdministrator) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  if (requiredRole === 'TECHNICIAN' && session.role !== 'TECHNICIAN') {
+    return <Navigate to="/dashboard" replace />;
   }
   return <>{children}</>;
 }

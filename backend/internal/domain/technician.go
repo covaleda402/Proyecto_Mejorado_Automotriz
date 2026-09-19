@@ -34,8 +34,15 @@ func NewTechnician(id, userID, specialty string, createdAt time.Time) (Technicia
 type TechnicianWorkload struct {
 	Technician         Technician
 	FullName           string
+	IsActive           bool
 	Busy               bool
 	ActiveOrderID      string
 	ActiveOrderNumber  string
 	ActiveVehiclePlate string
+}
+
+// CanReceiveAssignment reports whether the technician is eligible to receive a new order.
+// Enforces that the account must have active access and not hold another ongoing vehicle.
+func (w TechnicianWorkload) CanReceiveAssignment() bool {
+	return w.IsActive && !w.Busy
 }

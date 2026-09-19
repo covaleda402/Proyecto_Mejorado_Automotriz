@@ -33,10 +33,6 @@ func NewTimelineHandler(timeline usecase.TimelineUseCase) TimelineHandler {
 
 // Build returns every fact recorded for a vehicle, oldest first.
 func (h TimelineHandler) Build(writer http.ResponseWriter, request *http.Request) {
-	if _, err := requireAdministrator(request.Context()); err != nil {
-		failure(writer, err)
-		return
-	}
 	timeline, err := h.timeline.Build(request.Context(), request.PathValue("vehicleId"))
 	if err != nil {
 		failure(writer, err)

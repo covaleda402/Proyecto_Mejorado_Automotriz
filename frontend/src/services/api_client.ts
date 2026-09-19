@@ -3,8 +3,8 @@
  * session token, the JSON headers, the timeout and the translation of a
  * backend error into a message the user reads live in one place.
  */
-const rawBase = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
-export const API_BASE = rawBase ? rawBase.replace(/\/+$/, '') : '/api';
+export const API_BASE =
+  ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL) || '/api';
 
 const REQUEST_TIMEOUT_MILLISECOND = 15000;
 
@@ -21,7 +21,7 @@ export class ApiError extends Error {
 }
 
 export interface RequestOption {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
   token?: string | null;
   signal?: AbortSignal;
@@ -70,7 +70,6 @@ export async function request<T>(path: string, option: RequestOption = {}): Prom
       method: option.method ?? 'GET',
       headers: buildHeader(option),
       body: option.body === undefined ? undefined : JSON.stringify(option.body),
-      credentials: 'same-origin',
       signal: controller.signal,
     });
     if (!response.ok) {

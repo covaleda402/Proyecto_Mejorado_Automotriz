@@ -20,24 +20,15 @@ type registerInterventionRequest struct {
 	Part           []partUsagePayload `json:"part"`
 }
 
-// interventionWarrantySummary is the warranty issued over an intervention, if any.
-type interventionWarrantySummary struct {
-	ID                 string `json:"id"`
-	Kind               string `json:"kind"`
-	CoverageMonthCount int    `json:"coverageMonthCount"`
-	ExpirationDate     string `json:"expirationDate"`
-}
-
 // interventionResponse is one entry of the intervention list.
 type interventionResponse struct {
-	ID             string                       `json:"id"`
-	ServiceOrderID string                       `json:"serviceOrderId"`
-	TechnicianID   string                       `json:"technicianId"`
-	Description    string                       `json:"description"`
-	LaborHourCount float64                      `json:"laborHourCount"`
-	PerformedAt    string                       `json:"performedAt"`
-	Part           []partUsagePayload           `json:"part"`
-	Warranty       *interventionWarrantySummary `json:"warranty,omitempty"`
+	ID             string             `json:"id"`
+	ServiceOrderID string             `json:"serviceOrderId"`
+	TechnicianID   string             `json:"technicianId"`
+	Description    string             `json:"description"`
+	LaborHourCount float64            `json:"laborHourCount"`
+	PerformedAt    string             `json:"performedAt"`
+	Part           []partUsagePayload `json:"part"`
 }
 
 // InterventionHandler exposes the work executed on a vehicle.
@@ -79,12 +70,7 @@ func (h InterventionHandler) Register(writer http.ResponseWriter, request *http.
 
 // List returns the interventions recorded on an order.
 func (h InterventionHandler) List(writer http.ResponseWriter, request *http.Request) {
-	identity, err := callerFrom(request.Context())
-	if err != nil {
-		failure(writer, err)
-		return
-	}
-	listed, err := h.intervention.ListByServiceOrder(request.Context(), request.PathValue("serviceOrderId"), identity.UserID, identity.Role)
+	listed, err := h.intervention.ListByServiceOrder(request.Context(), request.PathValue("serviceOrderId"))
 	if err != nil {
 		failure(writer, err)
 		return
@@ -101,15 +87,6 @@ func toInterventionResponse(intervention domain.Intervention) interventionRespon
 	for _, item := range intervention.Part {
 		part = append(part, partUsagePayload{PartName: item.PartName, Quantity: item.Quantity})
 	}
-	var warranty *interventionWarrantySummary
-	if intervention.Warranty != nil {
-		warranty = &interventionWarrantySummary{
-			ID:                 intervention.Warranty.ID,
-			Kind:               string(intervention.Warranty.Kind),
-			CoverageMonthCount: intervention.Warranty.CoverageMonthCount,
-			ExpirationDate:     formatTime(intervention.Warranty.ExpirationDate),
-		}
-	}
 	return interventionResponse{
 		ID:             intervention.ID,
 		ServiceOrderID: intervention.ServiceOrderID,
@@ -118,6 +95,5 @@ func toInterventionResponse(intervention domain.Intervention) interventionRespon
 		LaborHourCount: intervention.LaborHourCount,
 		PerformedAt:    formatTime(intervention.PerformedAt),
 		Part:           part,
-		Warranty:       warranty,
 	}
 }

@@ -9,16 +9,26 @@ export type ServiceOrderStatus =
   | 'READY'
   | 'DELIVERED';
 
+export interface OrderPermissions {
+  canAdvance: boolean;
+  canAddDiagnostic: boolean;
+  canAddIntervention: boolean;
+  canAssign: boolean;
+}
+
 export interface ServiceOrder {
   id: string;
   orderNumber: string;
   vehicleId: string;
   vehiclePlate: string;
   technicianName: string;
+  assignedTechnicianId?: string;
+  technicianIsActive?: boolean;
   reportedFailure: string;
   status: ServiceOrderStatus;
   receivedAt: string;
   updatedAt: string;
+  permissions?: OrderPermissions;
 }
 
 export interface StatusTransition {
@@ -51,11 +61,11 @@ export interface PartUsage {
   quantity: number;
 }
 
-export interface WarrantySummary {
-  id: string;
-  kind: string;
-  coverageMonthCount: number;
-  expirationDate: string;
+export interface InterventionWarranty {
+  id?: string;
+  valid: boolean;
+  kind?: string;
+  coverageMonthCount?: number;
 }
 
 export interface Intervention {
@@ -66,7 +76,7 @@ export interface Intervention {
   laborHourCount: number;
   performedAt: string;
   part: PartUsage[];
-  warranty?: WarrantySummary;
+  warranty?: InterventionWarranty | null;
 }
 
 export function listServiceOrder(token: string, status: string): Promise<ServiceOrder[]> {

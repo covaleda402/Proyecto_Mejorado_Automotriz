@@ -32,7 +32,7 @@ export function App() {
             <Route
               path="/customers"
               element={
-                <ProtectedRoute administratorOnly>
+                <ProtectedRoute requiredRole="ADMINISTRATOR">
                   <CustomerPage />
                 </ProtectedRoute>
               }
@@ -40,7 +40,7 @@ export function App() {
             <Route
               path="/vehicles"
               element={
-                <ProtectedRoute administratorOnly>
+                <ProtectedRoute requiredRole="ADMINISTRATOR">
                   <VehiclePage />
                 </ProtectedRoute>
               }
@@ -48,7 +48,7 @@ export function App() {
             <Route
               path="/vehicles/:vehicleId/timeline"
               element={
-                <ProtectedRoute administratorOnly>
+                <ProtectedRoute requiredRole="ADMINISTRATOR">
                   <VehicleTimelinePage />
                 </ProtectedRoute>
               }
@@ -56,7 +56,7 @@ export function App() {
             <Route
               path="/technicians"
               element={
-                <ProtectedRoute administratorOnly>
+                <ProtectedRoute requiredRole="ADMINISTRATOR">
                   <TechnicianPage />
                 </ProtectedRoute>
               }
@@ -66,7 +66,7 @@ export function App() {
             <Route
               path="/warranties"
               element={
-                <ProtectedRoute administratorOnly>
+                <ProtectedRoute requiredRole="ADMINISTRATOR">
                   <WarrantyPage />
                 </ProtectedRoute>
               }

@@ -1,6 +1,8 @@
 package http
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -38,9 +40,26 @@ func protectedProbe(reached *bool) http.Handler {
 	})
 }
 
+type fakeUserReader struct {
+	user domain.User
+	err  error
+}
+
+func (f fakeUserReader) FindByID(_ context.Context, id string) (domain.User, error) {
+	if f.err != nil {
+		return domain.User{}, f.err
+	}
+	return f.user, nil
+}
+
+func testUserReader(isActive bool) fakeUserReader {
+	user, _ := domain.NewUserWithStatus("user-1", "admin", "hash", "Admin", domain.RoleAdministrator, isActive, testMoment)
+	return fakeUserReader{user: user}
+}
+
 func TestAuthMiddlewareRejectsARequestWithoutAToken(t *testing.T) {
 	reached := false
-	handler := authMiddleware(testIssuer(), testClock())(protectedProbe(&reached))
+	handler := authMiddleware(testIssuer(), testUserReader(true), testClock())(protectedProbe(&reached))
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/customer", nil))
@@ -55,7 +74,7 @@ func TestAuthMiddlewareRejectsARequestWithoutAToken(t *testing.T) {
 
 func TestAuthMiddlewareAcceptsAValidToken(t *testing.T) {
 	reached := false
-	handler := authMiddleware(testIssuer(), testClock())(protectedProbe(&reached))
+	handler := authMiddleware(testIssuer(), testUserReader(true), testClock())(protectedProbe(&reached))
 
 	request := httptest.NewRequest(http.MethodGet, "/api/customer", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenFor(t, domain.RoleAdministrator))
@@ -67,26 +86,9 @@ func TestAuthMiddlewareAcceptsAValidToken(t *testing.T) {
 	}
 }
 
-func TestAuthMiddlewareAcceptsSessionCookie(t *testing.T) {
-	reached := false
-	handler := authMiddleware(testIssuer(), testClock())(protectedProbe(&reached))
-
-	request := httptest.NewRequest(http.MethodGet, "/api/customer", nil)
-	request.AddCookie(&http.Cookie{
-		Name:  "session",
-		Value: tokenFor(t, domain.RoleAdministrator),
-	})
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusOK || !reached {
-		t.Fatalf("a valid session cookie must reach the handler, got %d reached=%v", recorder.Code, reached)
-	}
-}
-
 func TestAuthMiddlewareRejectsATamperedToken(t *testing.T) {
 	reached := false
-	handler := authMiddleware(testIssuer(), testClock())(protectedProbe(&reached))
+	handler := authMiddleware(testIssuer(), testUserReader(true), testClock())(protectedProbe(&reached))
 
 	tampered := tokenFor(t, domain.RoleAdministrator) + "x"
 	request := httptest.NewRequest(http.MethodGet, "/api/customer", nil)
@@ -102,7 +104,7 @@ func TestAuthMiddlewareRejectsATamperedToken(t *testing.T) {
 func TestAuthMiddlewareRejectsAnExpiredToken(t *testing.T) {
 	reached := false
 	expiredClock := func() time.Time { return testMoment.Add(2 * time.Hour) }
-	handler := authMiddleware(testIssuer(), expiredClock)(protectedProbe(&reached))
+	handler := authMiddleware(testIssuer(), testUserReader(true), expiredClock)(protectedProbe(&reached))
 
 	request := httptest.NewRequest(http.MethodGet, "/api/customer", nil)
 	request.Header.Set("Authorization", "Bearer "+tokenFor(t, domain.RoleAdministrator))
@@ -111,6 +113,38 @@ func TestAuthMiddlewareRejectsAnExpiredToken(t *testing.T) {
 
 	if recorder.Code != http.StatusUnauthorized || reached {
 		t.Fatalf("an expired token must be rejected, got %d reached=%v", recorder.Code, reached)
+	}
+}
+
+func TestAuthMiddlewareRejectsAnInactiveUserWithValidJWT(t *testing.T) {
+	reached := false
+	// User is deactivated in DB (is_active = false)
+	handler := authMiddleware(testIssuer(), testUserReader(false), testClock())(protectedProbe(&reached))
+
+	request := httptest.NewRequest(http.MethodGet, "/api/service-order", nil)
+	request.Header.Set("Authorization", "Bearer "+tokenFor(t, domain.RoleTechnician))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized || reached {
+		t.Fatalf("an inactive user must be rejected with 401, got %d reached=%v", recorder.Code, reached)
+	}
+}
+
+func TestDatabaseUnavailableDoesNotBypassRevocationFailClosed(t *testing.T) {
+	reached := false
+	// DB error / timeout (fail-closed test)
+	dbErrReader := fakeUserReader{err: errors.New("connection refused")}
+	handler := authMiddleware(testIssuer(), dbErrReader, testClock())(protectedProbe(&reached))
+
+	request := httptest.NewRequest(http.MethodGet, "/api/service-order", nil)
+	// JWT is cryptographically valid!
+	request.Header.Set("Authorization", "Bearer "+tokenFor(t, domain.RoleTechnician))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusServiceUnavailable || reached {
+		t.Fatalf("database unavailability must fail-closed with 503, got %d reached=%v", recorder.Code, reached)
 	}
 }
 

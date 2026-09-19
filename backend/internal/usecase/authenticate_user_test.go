@@ -106,3 +106,60 @@ func TestAuthenticateRejectsEmptyCredentials(t *testing.T) {
 		t.Fatalf("empty credentials must be rejected as unauthorized, got %v", err)
 	}
 }
+
+func TestBootstrapCredentialsHashes(t *testing.T) {
+	passwords := map[string]string{
+		"admin":    "Admin2026*",
+		"jperez":   "JPerez2026*",
+		"lramirez": "LRamirez2026*",
+	}
+	for user, pass := range passwords {
+		h, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
+		if err != nil {
+			t.Fatalf("failed to hash password for %s: %v", user, err)
+		}
+		if err := bcrypt.CompareHashAndPassword(h, []byte(pass)); err != nil {
+			t.Fatalf("hash verification failed for %s: %v", user, err)
+		}
+	}
+}
+
+func TestExactUserCredentialsAuthentication(t *testing.T) {
+	usersMap := make(map[string]domain.User)
+	passwords := map[string]struct {
+		pass string
+		role domain.Role
+	}{
+		"admin":    {pass: "Admin2026*", role: domain.RoleAdministrator},
+		"jperez":   {pass: "JPerez2026*", role: domain.RoleTechnician},
+		"lramirez": {pass: "LRamirez2026*", role: domain.RoleTechnician},
+	}
+	for u, data := range passwords {
+		hash, err := bcrypt.GenerateFromPassword([]byte(data.pass), bcrypt.MinCost)
+		if err != nil {
+			t.Fatalf("hashing failed for %s: %v", u, err)
+		}
+		user, err := domain.NewUser("id-"+u, u, string(hash), u+" full name", data.role, time.Now())
+		if err != nil {
+			t.Fatalf("creating user failed for %s: %v", u, err)
+		}
+		usersMap[u] = user
+	}
+	repo := &fakeUserRepository{user: usersMap}
+	useCase := usecase.NewAuthenticateUser(repo, &fakeTokenIssuer{}, fixedClock())
+
+	for u, data := range passwords {
+		session, err := useCase.Execute(context.Background(), u, data.pass)
+		if err != nil {
+			t.Fatalf("expected successful login for %s: %v", u, err)
+		}
+		if session.Username != u {
+			t.Errorf("expected username %s, got %s", u, session.Username)
+		}
+		if session.Role != data.role {
+			t.Errorf("expected role %s for %s, got %s", data.role, u, session.Role)
+		}
+	}
+}
+
+

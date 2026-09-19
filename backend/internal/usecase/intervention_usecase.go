@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"workshop/internal/domain"
@@ -27,7 +28,7 @@ type InterventionUseCase struct {
 	intervention InterventionRepository
 	order        ServiceOrderRepository
 	assignment   AssignmentRepository
-	technician   TechnicianRepository
+	technician   TechnicianReader
 	newID        func() string
 	now          func() time.Time
 }
@@ -37,7 +38,7 @@ func NewInterventionUseCase(
 	intervention InterventionRepository,
 	order ServiceOrderRepository,
 	assignment AssignmentRepository,
-	technician TechnicianRepository,
+	technician TechnicianReader,
 	newID func() string,
 	now func() time.Time,
 ) InterventionUseCase {
@@ -52,23 +53,23 @@ func NewInterventionUseCase(
 }
 
 // Register stores an intervention with its parts and moves the order to
-// IN_REPAIR the first time work is recorded. A delivered order rejects any write.
+// IN_REPAIR the first time work is recorded.
 func (i InterventionUseCase) Register(
 	ctx context.Context,
 	serviceOrderID, actorUserID, description string,
 	laborHourCount float64,
 	part []PartUsageInput,
 ) (domain.Intervention, error) {
+	profile, err := requireAssignedTechnician(ctx, i.assignment, i.technician, serviceOrderID, actorUserID)
+	if err != nil {
+		return domain.Intervention{}, err
+	}
 	order, err := i.order.FindByID(ctx, serviceOrderID)
 	if err != nil {
 		return domain.Intervention{}, err
 	}
-	if order.Status == domain.StatusDelivered {
-		return domain.Intervention{}, domain.ErrForbidden
-	}
-	profile, err := requireAssignedTechnician(ctx, i.assignment, i.technician, serviceOrderID, actorUserID)
-	if err != nil {
-		return domain.Intervention{}, err
+	if !order.Status.CanAddIntervention() {
+		return domain.Intervention{}, fmt.Errorf("%w: cannot add intervention to order in status %s", domain.ErrConflict, order.Status)
 	}
 	performedAt := i.now()
 	interventionID := i.newID()
@@ -102,11 +103,6 @@ func (i InterventionUseCase) Register(
 }
 
 // ListByServiceOrder returns the interventions recorded on an order.
-func (i InterventionUseCase) ListByServiceOrder(ctx context.Context, serviceOrderID, actorUserID string, actorRole domain.Role) ([]domain.Intervention, error) {
-	if actorRole == domain.RoleTechnician {
-		if _, err := requireAssignedTechnician(ctx, i.assignment, i.technician, serviceOrderID, actorUserID); err != nil {
-			return nil, err
-		}
-	}
+func (i InterventionUseCase) ListByServiceOrder(ctx context.Context, serviceOrderID string) ([]domain.Intervention, error) {
 	return i.intervention.ListByServiceOrder(ctx, serviceOrderID)
 }

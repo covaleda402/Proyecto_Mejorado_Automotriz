@@ -1,5 +1,4 @@
-/* Shell of every signed in screen: the brand header, the navigation the role
-   is allowed to see, and the outlet where the active screen renders. */
+import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 
 import { useSession } from '../shared/SessionContext';
@@ -22,21 +21,41 @@ const NAVIGATION: NavigationItem[] = [
 export function AppLayout() {
   const { session, signOut, isAdministrator } = useSession();
   const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const leave = () => {
     signOut();
     navigate('/login', { replace: true });
   };
 
+  const closeMenu = () => {
+    setMenuOpen(false);
+  };
+
   return (
     <>
       <header className="app-header">
-        <h1 className="app-header__brand">Soporte Tecnico Automotriz</h1>
-        <nav className="app-header__nav" aria-label="Navegacion principal">
+        <div className="app-header__bar">
+          <h1 className="app-header__brand">Soporte Tecnico Automotriz</h1>
+          <button
+            type="button"
+            className="app-header__menu-toggle"
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label={menuOpen ? 'Cerrar menu' : 'Abrir menu'}
+            aria-expanded={menuOpen}
+          >
+            {menuOpen ? '✕' : '☰'}
+          </button>
+        </div>
+        <nav
+          className={`app-header__nav ${menuOpen ? 'app-header__nav--open' : ''}`}
+          aria-label="Navegacion principal"
+        >
           {NAVIGATION.filter((item) => isAdministrator || !item.administratorOnly).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
+              onClick={closeMenu}
               className={({ isActive }) =>
                 'app-header__link' + (isActive ? ' app-header__link--active' : '')
               }
@@ -45,9 +64,9 @@ export function AppLayout() {
             </NavLink>
           ))}
         </nav>
-        <div className="app-header__user">
-          <span>{session?.fullName}</span>
-          <button type="button" className="button button--secondary" onClick={leave}>
+        <div className={`app-header__user ${menuOpen ? 'app-header__user--open' : ''}`}>
+          <span className="app-header__username">{session?.fullName}</span>
+          <button type="button" className="button button--secondary app-header__logout" onClick={leave}>
             Salir
           </button>
         </div>

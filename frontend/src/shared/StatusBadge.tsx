@@ -26,3 +26,12 @@ export function AvailabilityBadge({ busy }: { busy: boolean }) {
     </span>
   );
 }
+
+/** Badge that indicates whether a technician account has active access or revoked. */
+export function AccountStatusBadge({ active }: { active: boolean }) {
+  return (
+    <span className={'badge badge--' + (active ? 'ready' : 'delivered')}>
+      {active ? 'Activo' : 'Sin acceso'}
+    </span>
+  );
+}

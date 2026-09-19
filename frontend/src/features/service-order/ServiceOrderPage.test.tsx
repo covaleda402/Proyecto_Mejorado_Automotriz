@@ -15,12 +15,19 @@ const ORDER = {
   status: 'RECEIVED',
   receivedAt: '2026-03-01T09:00:00Z',
   updatedAt: '2026-03-01T09:00:00Z',
+  permissions: {
+    canAdvance: false,
+    canAddDiagnostic: false,
+    canAddIntervention: false,
+    canAssign: true,
+  },
 };
 
 function storeAdministratorSession() {
-  window.sessionStorage.setItem(
+  window.localStorage.setItem(
     'workshop.session',
     JSON.stringify({
+      token: 'a-token',
       expiresAt: new Date(Date.now() + 3600000).toISOString(),
       userId: 'user-1',
       username: 'admin',

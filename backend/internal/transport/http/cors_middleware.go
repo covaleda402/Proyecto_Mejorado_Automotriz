@@ -1,23 +1,49 @@
 package http
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
-// corsMiddleware answers cross origin requests for exactly one configured
-// origin. A wildcard is never sent: the interface origin is known and comes
-// from the environment.
+// corsMiddleware answers cross origin requests for configured origins or wildcard.
+// It sets permissive headers when configured with "*" or when the request origin matches.
 func corsMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
+	origins := strings.Split(allowedOrigin, ",")
+	for i := range origins {
+		origins[i] = strings.TrimSpace(origins[i])
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			origin := request.Header.Get("Origin")
-			if origin != "" && origin == allowedOrigin {
+			isAllowed := false
+
+			for _, allowed := range origins {
+				if allowed == "*" {
+					isAllowed = true
+					break
+				}
+				if origin != "" && strings.TrimRight(origin, "/") == strings.TrimRight(allowed, "/") {
+					isAllowed = true
+					break
+				}
+			}
+
+			if isAllowed {
 				header := writer.Header()
-				header.Set("Access-Control-Allow-Origin", allowedOrigin)
-				header.Set("Access-Control-Allow-Credentials", "true")
-				header.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-				header.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-				header.Set("Access-Control-Max-Age", "600")
+				if allowedOrigin == "*" && origin == "" {
+					header.Set("Access-Control-Allow-Origin", "*")
+				} else if origin != "" {
+					header.Set("Access-Control-Allow-Origin", origin)
+				} else {
+					header.Set("Access-Control-Allow-Origin", allowedOrigin)
+				}
+				header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				header.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, X-Requested-With")
+				header.Set("Access-Control-Max-Age", "86400")
 				header.Add("Vary", "Origin")
 			}
+
 			if request.Method == http.MethodOptions {
 				writer.WriteHeader(http.StatusNoContent)
 				return

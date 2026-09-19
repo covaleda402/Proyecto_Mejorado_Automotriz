@@ -1,7 +1,10 @@
 package http
 
 import (
+	"errors"
+	"math"
 	"net/http"
+	"strconv"
 
 	"workshop/internal/domain"
 	"workshop/internal/usecase"
@@ -24,18 +27,24 @@ type sessionResponse struct {
 	Role      string `json:"role"`
 }
 
-// AuthHandler exposes the sign in and sign out operations.
+// AuthHandler exposes the sign in operation.
 type AuthHandler struct {
 	authenticate usecase.AuthenticateUser
-	rateLimiter  *LoginRateLimiter
+	limiter      *LoginRateLimiter
 }
 
 // NewAuthHandler wires the authentication handler.
-func NewAuthHandler(authenticate usecase.AuthenticateUser, rateLimiter *LoginRateLimiter) AuthHandler {
-	return AuthHandler{authenticate: authenticate, rateLimiter: rateLimiter}
+func NewAuthHandler(authenticate usecase.AuthenticateUser, limiter *LoginRateLimiter) AuthHandler {
+	if limiter == nil {
+		limiter = NewLoginRateLimiter()
+	}
+	return AuthHandler{
+		authenticate: authenticate,
+		limiter:      limiter,
+	}
 }
 
-// SignIn verifies the credentials, enforces rate limits, sets a secure session cookie and returns session data.
+// SignIn verifies the credentials and returns a session token.
 func (h AuthHandler) SignIn(writer http.ResponseWriter, request *http.Request) {
 	var payload signInRequest
 	if err := decode(writer, request, &payload); err != nil {
@@ -43,34 +52,33 @@ func (h AuthHandler) SignIn(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	key := RateLimitKey(request, payload.Username)
-	if h.rateLimiter != nil && h.rateLimiter.IsBlocked(key) {
-		failure(writer, domain.ErrTooManyRequests)
+	clientIP := h.limiter.ExtractClientIP(request, nil)
+	allowed, retryAfter := h.limiter.AllowAttempt(clientIP, payload.Username)
+	if !allowed {
+		seconds := int(math.Ceil(retryAfter.Seconds()))
+		if seconds < 1 {
+			seconds = 1
+		}
+		writer.Header().Set("Retry-After", strconv.Itoa(seconds))
+		respond(writer, http.StatusTooManyRequests, errorPayload{
+			Code:    "rate_limit_exceeded",
+			Message: "Demasiados intentos fallidos. Intente nuevamente mas tarde.",
+		})
 		return
 	}
 
 	session, err := h.authenticate.Execute(request.Context(), payload.Username, payload.Password)
 	if err != nil {
-		if h.rateLimiter != nil {
-			h.rateLimiter.RecordFailure(key)
+		h.limiter.RecordFailure(clientIP, payload.Username)
+		if errors.Is(err, domain.ErrAccountInactive) {
+			failure(writer, domain.ErrAccountInactive)
+			return
 		}
-		failure(writer, err)
+		failure(writer, domain.ErrInvalidCredentials)
 		return
 	}
 
-	if h.rateLimiter != nil {
-		h.rateLimiter.Reset(key)
-	}
-
-	http.SetCookie(writer, &http.Cookie{
-		Name:     "session",
-		Value:    session.Token,
-		Path:     "/",
-		Expires:  session.ExpiresAt,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-
+	h.limiter.Reset(clientIP, payload.Username)
 	respond(writer, http.StatusOK, sessionResponse{
 		Token:     session.Token,
 		ExpiresAt: formatTime(session.ExpiresAt),
@@ -79,17 +87,4 @@ func (h AuthHandler) SignIn(writer http.ResponseWriter, request *http.Request) {
 		FullName:  session.FullName,
 		Role:      string(session.Role),
 	})
-}
-
-// SignOut clears the session cookie.
-func (h AuthHandler) SignOut(writer http.ResponseWriter, request *http.Request) {
-	http.SetCookie(writer, &http.Cookie{
-		Name:     "session",
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-	respond(writer, http.StatusOK, map[string]string{"message": "Sesion cerrada."})
 }

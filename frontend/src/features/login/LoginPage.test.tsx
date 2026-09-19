@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { LoginPage } from './LoginPage';
 import { SessionProvider } from '../../shared/SessionContext';
@@ -24,12 +24,6 @@ function jsonResponse(status: number, payload: unknown): Response {
 }
 
 describe('login screen', () => {
-  beforeEach(() => {
-    window.localStorage.clear();
-    window.sessionStorage.clear();
-    vi.restoreAllMocks();
-  });
-
   it('shows the form in Spanish with labelled fields', () => {
     renderLogin();
     expect(screen.getByLabelText('Usuario')).toBeInTheDocument();
@@ -58,8 +52,7 @@ describe('login screen', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Ingresar' }));
 
     await waitFor(() => {
-      expect(window.localStorage.getItem('workshop.session')).toBeNull();
-      expect(window.sessionStorage.getItem('workshop.session')).toContain('admin');
+      expect(window.localStorage.getItem('workshop.session')).toContain('a-token');
     });
   });
 
@@ -78,7 +71,6 @@ describe('login screen', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Usuario o contrasena incorrectos.');
     expect(window.localStorage.getItem('workshop.session')).toBeNull();
-    expect(window.sessionStorage.getItem('workshop.session')).toBeNull();
     expect(screen.getByLabelText('Contrasena')).toHaveValue('');
   });
 });

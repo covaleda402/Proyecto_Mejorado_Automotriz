@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"workshop/internal/domain"
@@ -19,7 +20,7 @@ type DiagnosticUseCase struct {
 	diagnostic DiagnosticRepository
 	order      ServiceOrderRepository
 	assignment AssignmentRepository
-	technician TechnicianRepository
+	technician TechnicianReader
 	newID      func() string
 	now        func() time.Time
 }
@@ -29,7 +30,7 @@ func NewDiagnosticUseCase(
 	diagnostic DiagnosticRepository,
 	order ServiceOrderRepository,
 	assignment AssignmentRepository,
-	technician TechnicianRepository,
+	technician TechnicianReader,
 	newID func() string,
 	now func() time.Time,
 ) DiagnosticUseCase {
@@ -45,18 +46,18 @@ func NewDiagnosticUseCase(
 
 // Record stores the diagnostic written by the assigned technician and moves
 // the order to IN_DIAGNOSIS. A technician who does not hold the order is
-// refused before anything is written. A delivered order rejects any write.
+// refused before anything is written.
 func (d DiagnosticUseCase) Record(ctx context.Context, serviceOrderID, actorUserID, finding, componentToRepair string) (domain.Diagnostic, error) {
+	profile, err := requireAssignedTechnician(ctx, d.assignment, d.technician, serviceOrderID, actorUserID)
+	if err != nil {
+		return domain.Diagnostic{}, err
+	}
 	order, err := d.order.FindByID(ctx, serviceOrderID)
 	if err != nil {
 		return domain.Diagnostic{}, err
 	}
-	if order.Status == domain.StatusDelivered {
-		return domain.Diagnostic{}, domain.ErrForbidden
-	}
-	profile, err := requireAssignedTechnician(ctx, d.assignment, d.technician, serviceOrderID, actorUserID)
-	if err != nil {
-		return domain.Diagnostic{}, err
+	if !order.Status.CanAddDiagnostic() {
+		return domain.Diagnostic{}, fmt.Errorf("%w: cannot add diagnostic to order in status %s", domain.ErrConflict, order.Status)
 	}
 	diagnostic, err := domain.NewDiagnostic(d.newID(), serviceOrderID, profile.ID, finding, componentToRepair, d.now())
 	if err != nil {
@@ -79,11 +80,6 @@ func (d DiagnosticUseCase) Record(ctx context.Context, serviceOrderID, actorUser
 }
 
 // FindByServiceOrder returns the diagnostic of an order when it exists.
-func (d DiagnosticUseCase) FindByServiceOrder(ctx context.Context, serviceOrderID, actorUserID string, actorRole domain.Role) (domain.Diagnostic, error) {
-	if actorRole == domain.RoleTechnician {
-		if _, err := requireAssignedTechnician(ctx, d.assignment, d.technician, serviceOrderID, actorUserID); err != nil {
-			return domain.Diagnostic{}, err
-		}
-	}
+func (d DiagnosticUseCase) FindByServiceOrder(ctx context.Context, serviceOrderID string) (domain.Diagnostic, error) {
 	return d.diagnostic.FindByServiceOrder(ctx, serviceOrderID)
 }

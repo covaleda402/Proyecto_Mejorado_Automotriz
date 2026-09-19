@@ -14,6 +14,7 @@ type AssignmentRepository interface {
 	Save(ctx context.Context, assignment domain.Assignment) error
 	FindActiveByServiceOrder(ctx context.Context, serviceOrderID string) (domain.Assignment, error)
 	FindActiveByTechnician(ctx context.Context, technicianID string) (domain.Assignment, error)
+	FindLatestByServiceOrder(ctx context.Context, serviceOrderID string) (domain.Assignment, error)
 	ReleaseByServiceOrder(ctx context.Context, serviceOrderID string, releasedAt time.Time) error
 }
 
@@ -21,7 +22,7 @@ type AssignmentRepository interface {
 type AssignmentUseCase struct {
 	assignment AssignmentRepository
 	order      ServiceOrderRepository
-	technician TechnicianRepository
+	technician TechnicianReader
 	newID      func() string
 	now        func() time.Time
 }
@@ -30,7 +31,7 @@ type AssignmentUseCase struct {
 func NewAssignmentUseCase(
 	assignment AssignmentRepository,
 	order ServiceOrderRepository,
-	technician TechnicianRepository,
+	technician TechnicianReader,
 	newID func() string,
 	now func() time.Time,
 ) AssignmentUseCase {
@@ -38,16 +39,12 @@ func NewAssignmentUseCase(
 }
 
 // Assign gives a service order to a technician. It is rejected when that
-// technician still holds an order that has not been delivered. A delivered
-// order rejects any assignment. Reassigning releases the previous active
-// assignment first.
+// technician still holds an order that has not been delivered. The check here
+// gives the user a clear message; the unique active marker in storage is what
+// makes the rule hold under a concurrent retry.
 func (a AssignmentUseCase) Assign(ctx context.Context, serviceOrderID, technicianID string) (domain.Assignment, error) {
-	order, err := a.order.FindByID(ctx, serviceOrderID)
-	if err != nil {
+	if _, err := a.order.FindByID(ctx, serviceOrderID); err != nil {
 		return domain.Assignment{}, err
-	}
-	if order.Status == domain.StatusDelivered {
-		return domain.Assignment{}, domain.ErrForbidden
 	}
 	if _, err := a.technician.FindByID(ctx, technicianID); err != nil {
 		return domain.Assignment{}, err
@@ -62,11 +59,9 @@ func (a AssignmentUseCase) Assign(ctx context.Context, serviceOrderID, technicia
 		if existing.TechnicianID == technicianID {
 			return existing, nil
 		}
-		// Reassigning: release previous technician assignment
-		if err := a.assignment.ReleaseByServiceOrder(ctx, serviceOrderID, a.now()); err != nil {
-			return domain.Assignment{}, err
-		}
-	} else if !errors.Is(err, domain.ErrNotFound) {
+		return domain.Assignment{}, fmt.Errorf("%w: the service order already has an active technician", domain.ErrConflict)
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
 		return domain.Assignment{}, err
 	}
 	assignment, err := domain.NewAssignment(a.newID(), serviceOrderID, technicianID, a.now())
@@ -80,12 +75,7 @@ func (a AssignmentUseCase) Assign(ctx context.Context, serviceOrderID, technicia
 }
 
 // FindActive returns the technician currently holding a service order.
-func (a AssignmentUseCase) FindActive(ctx context.Context, serviceOrderID, actorUserID string, actorRole domain.Role) (domain.Assignment, error) {
-	if actorRole == domain.RoleTechnician {
-		if _, err := requireAssignedTechnician(ctx, a.assignment, a.technician, serviceOrderID, actorUserID); err != nil {
-			return domain.Assignment{}, err
-		}
-	}
+func (a AssignmentUseCase) FindActive(ctx context.Context, serviceOrderID string) (domain.Assignment, error) {
 	return a.assignment.FindActiveByServiceOrder(ctx, serviceOrderID)
 }
 
@@ -95,7 +85,7 @@ func (a AssignmentUseCase) FindActive(ctx context.Context, serviceOrderID, actor
 func requireAssignedTechnician(
 	ctx context.Context,
 	assignment AssignmentRepository,
-	technician TechnicianRepository,
+	technician TechnicianReader,
 	serviceOrderID, actorUserID string,
 ) (domain.Technician, error) {
 	profile, err := technician.FindByUserID(ctx, actorUserID)

@@ -12,7 +12,6 @@ export interface Dashboard {
   openOrderCount: number;
   statusCount: StatusCount[];
   busyTechnician: Technician[];
-  technicians?: Technician[];
 }
 
 export function readDashboard(token: string): Promise<Dashboard> {

@@ -17,7 +17,6 @@ type dashboardResponse struct {
 	OpenOrderCount int                   `json:"openOrderCount"`
 	StatusCount    []statusCountResponse `json:"statusCount"`
 	BusyTechnician []technicianResponse  `json:"busyTechnician"`
-	Technicians    []technicianResponse  `json:"technicians"`
 }
 
 // DashboardHandler exposes the workload summary of the workshop.
@@ -54,23 +53,9 @@ func (h DashboardHandler) Build(writer http.ResponseWriter, request *http.Reques
 			ActiveVehiclePlate: item.ActiveVehiclePlate,
 		})
 	}
-	all := make([]technicianResponse, 0, len(summary.Technicians))
-	for _, item := range summary.Technicians {
-		all = append(all, technicianResponse{
-			ID:                 item.Technician.ID,
-			UserID:             item.Technician.UserID,
-			FullName:           item.FullName,
-			Specialty:          item.Technician.Specialty,
-			Busy:               item.Busy,
-			ActiveOrderID:      item.ActiveOrderID,
-			ActiveOrderNumber:  item.ActiveOrderNumber,
-			ActiveVehiclePlate: item.ActiveVehiclePlate,
-		})
-	}
 	respond(writer, http.StatusOK, dashboardResponse{
 		OpenOrderCount: summary.OpenOrderCount,
 		StatusCount:    status,
 		BusyTechnician: busy,
-		Technicians:    all,
 	})
 }

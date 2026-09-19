@@ -57,10 +57,6 @@ func (f *fakeOrderRepository) List(_ context.Context, _ string) ([]usecase.Servi
 	return nil, nil
 }
 
-func (f *fakeOrderRepository) ListByTechnicianUser(_ context.Context, _, _ string) ([]usecase.ServiceOrderSummary, error) {
-	return nil, nil
-}
-
 func (f *fakeOrderRepository) ListByVehicle(_ context.Context, _ string) ([]domain.ServiceOrder, error) {
 	return nil, nil
 }
@@ -122,6 +118,15 @@ func (f *fakeAssignmentRepository) FindActiveByTechnician(_ context.Context, tec
 	return domain.Assignment{}, domain.ErrNotFound
 }
 
+func (f *fakeAssignmentRepository) FindLatestByServiceOrder(_ context.Context, serviceOrderID string) (domain.Assignment, error) {
+	for i := len(f.assignment) - 1; i >= 0; i-- {
+		if f.assignment[i].ServiceOrderID == serviceOrderID {
+			return f.assignment[i], nil
+		}
+	}
+	return domain.Assignment{}, domain.ErrNotFound
+}
+
 func (f *fakeAssignmentRepository) ReleaseByServiceOrder(_ context.Context, serviceOrderID string, releasedAt time.Time) error {
 	for index := range f.assignment {
 		if f.assignment[index].ServiceOrderID == serviceOrderID && f.assignment[index].IsActive {
@@ -169,6 +174,23 @@ func (f *fakeTechnicianRepository) FindByUserID(_ context.Context, userID string
 		return domain.Technician{}, domain.ErrNotFound
 	}
 	return f.technician[id], nil
+}
+
+func (f *fakeTechnicianRepository) CreateWithAccount(_ context.Context, user domain.User, tech domain.Technician) error {
+	f.technician[tech.ID] = tech
+	f.byUser[tech.UserID] = tech.ID
+	return nil
+}
+
+func (f *fakeTechnicianRepository) UpdateAccessWithLock(_ context.Context, actorUserID, technicianID string, active bool) (domain.TechnicianWorkload, error) {
+	tech, ok := f.technician[technicianID]
+	if !ok {
+		return domain.TechnicianWorkload{}, domain.ErrNotFound
+	}
+	if tech.UserID == actorUserID {
+		return domain.TechnicianWorkload{}, domain.ErrSelfDeactivation
+	}
+	return domain.TechnicianWorkload{Technician: tech, IsActive: active}, nil
 }
 
 func buildOrder(t *testing.T, id, number string) domain.ServiceOrder {

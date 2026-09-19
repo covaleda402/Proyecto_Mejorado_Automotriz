@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { ApiError } from '../../services/api_client';
 import { findDiagnostic, recordDiagnostic } from '../../services/service_order_service';
+import type { OrderPermissions } from '../../services/service_order_service';
 import { ErrorBanner, SuccessBanner } from '../../shared/DataState';
 import { useAsyncData } from '../../shared/useAsyncData';
 import { useSession, useToken } from '../../shared/SessionContext';
@@ -11,11 +12,17 @@ import { formatDateTime } from '../../shared/format';
 
 interface DiagnosticPanelProps {
   serviceOrderId: string;
-  isDelivered?: boolean;
   onChange: () => void;
+  orderPermissions?: OrderPermissions;
+  permissions?: OrderPermissions;
 }
 
-export function DiagnosticPanel({ serviceOrderId, isDelivered = false, onChange }: DiagnosticPanelProps) {
+export function DiagnosticPanel({
+  serviceOrderId,
+  onChange,
+  orderPermissions,
+  permissions,
+}: DiagnosticPanelProps) {
   const token = useToken();
   const { isAdministrator } = useSession();
   const diagnostic = useAsyncData(
@@ -34,11 +41,14 @@ export function DiagnosticPanel({ serviceOrderId, isDelivered = false, onChange 
   const [confirmation, setConfirmation] = useState('');
   const [sending, setSending] = useState(false);
 
+  const activePermissions = orderPermissions ?? permissions;
+  const canAddDiagnostic =
+    activePermissions !== undefined
+      ? activePermissions.canAddDiagnostic === true
+      : !isAdministrator && !diagnostic.data;
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (isDelivered) {
-      return;
-    }
     setError('');
     setConfirmation('');
     setSending(true);
@@ -82,11 +92,7 @@ export function DiagnosticPanel({ serviceOrderId, isDelivered = false, onChange 
         </div>
       ) : null}
 
-      {isDelivered ? (
-        <p className="state-message">La orden ya fue entregada. No se permite modificar el diagnostico.</p>
-      ) : isAdministrator ? (
-        <p className="state-message">Solo el tecnico asignado puede escribir el diagnostico.</p>
-      ) : (
+      {canAddDiagnostic ? (
         <form onSubmit={submit} noValidate>
           <ErrorBanner message={error} />
           <SuccessBanner message={confirmation} />
@@ -118,6 +124,10 @@ export function DiagnosticPanel({ serviceOrderId, isDelivered = false, onChange 
             {sending ? 'Guardando...' : 'Guardar diagnostico'}
           </button>
         </form>
+      ) : (
+        <p className="state-message">
+          El diagnóstico ya fue registrado o no tienes permisos para editarlo.
+        </p>
       )}
     </section>
   );

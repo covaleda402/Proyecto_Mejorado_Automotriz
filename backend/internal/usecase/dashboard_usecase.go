@@ -17,17 +17,16 @@ type Dashboard struct {
 	OpenOrderCount int
 	StatusCount    []StatusCount
 	BusyTechnician []domain.TechnicianWorkload
-	Technicians    []domain.TechnicianWorkload
 }
 
 // DashboardUseCase reports the workload of the workshop.
 type DashboardUseCase struct {
 	order      ServiceOrderRepository
-	technician TechnicianRepository
+	technician TechnicianReader
 }
 
 // NewDashboardUseCase wires the dashboard use case.
-func NewDashboardUseCase(order ServiceOrderRepository, technician TechnicianRepository) DashboardUseCase {
+func NewDashboardUseCase(order ServiceOrderRepository, technician TechnicianReader) DashboardUseCase {
 	return DashboardUseCase{order: order, technician: technician}
 }
 
@@ -64,10 +63,5 @@ func (d DashboardUseCase) Build(ctx context.Context) (Dashboard, error) {
 			busy = append(busy, item)
 		}
 	}
-	return Dashboard{
-		OpenOrderCount: openCount,
-		StatusCount:    summary,
-		BusyTechnician: busy,
-		Technicians:    workload,
-	}, nil
+	return Dashboard{OpenOrderCount: openCount, StatusCount: summary, BusyTechnician: busy}, nil
 }

@@ -12,12 +12,13 @@ import { StatusHistoryPanel } from './StatusHistoryPanel';
 import { DataState, ErrorBanner, SuccessBanner } from '../../shared/DataState';
 import { StatusBadge } from '../../shared/StatusBadge';
 import { useAsyncData } from '../../shared/useAsyncData';
-import { useToken } from '../../shared/SessionContext';
+import { useSession, useToken } from '../../shared/SessionContext';
 import { formatDateTime, nextStatus, statusLabel } from '../../shared/format';
 
 export function ServiceOrderDetailPage() {
   const { serviceOrderId = '' } = useParams();
   const token = useToken();
+  const { isAdministrator } = useSession();
   const order = useAsyncData(() => findServiceOrder(token, serviceOrderId), [token, serviceOrderId]);
   const [actionError, setActionError] = useState('');
   const [confirmation, setConfirmation] = useState('');
@@ -26,6 +27,11 @@ export function ServiceOrderDetailPage() {
 
   const current = order.data;
   const following = current ? nextStatus(current.status) : null;
+  const hasAssignedTechnician = Boolean(current?.technicianName && current.technicianName !== 'Sin asignar');
+  const canAdvance =
+    current?.permissions !== undefined
+      ? current.permissions.canAdvance
+      : Boolean(isAdministrator && following && (following !== 'IN_DIAGNOSIS' && following !== 'IN_REPAIR' || hasAssignedTechnician));
 
   const advance = async () => {
     if (!following) {
@@ -57,12 +63,35 @@ export function ServiceOrderDetailPage() {
             {current?.orderNumber} {current ? <StatusBadge status={current.status} /> : null}
           </h3>
           <p>
+            <strong>
+              {current?.status === 'DELIVERED'
+                ? 'Técnico que atendió el servicio:'
+                : 'Técnico responsable asignado:'}
+            </strong>{' '}
+            {current?.technicianName || 'Sin asignar'}
+            {current?.technicianIsActive === false ? (
+              <span className="badge badge--delivered" style={{ marginLeft: '8px' }}>
+                Sin acceso
+              </span>
+            ) : null}
+          </p>
+          <p>
             <strong>Falla reportada:</strong> {current?.reportedFailure}
           </p>
           <p className="timeline__date">Ingreso: {formatDateTime(current?.receivedAt ?? '')}</p>
           <ErrorBanner message={actionError} />
           <SuccessBanner message={confirmation} />
-          {following ? (
+          {current?.technicianIsActive === false && current?.status !== 'DELIVERED' ? (
+            <p className="state-message" style={{ color: '#b91c1c', fontWeight: 500 }}>
+              ⚠️ El técnico responsable asignado tiene el acceso inhabilitado. Reasigne la orden a un técnico activo para continuar los trabajos.
+            </p>
+          ) : null}
+          {!hasAssignedTechnician && following && (following === 'IN_DIAGNOSIS' || following === 'IN_REPAIR') ? (
+            <p className="state-message" style={{ color: '#b45309', fontWeight: 500 }}>
+              ⚠️ Debe asignar un técnico responsable a la orden antes de iniciar el diagnóstico o la reparación.
+            </p>
+          ) : null}
+          {canAdvance && following ? (
             <button
               type="button"
               className="button button--primary"
@@ -76,19 +105,24 @@ export function ServiceOrderDetailPage() {
         </section>
 
         <div className="panel-stack">
-          <AssignmentPanel
-            serviceOrderId={serviceOrderId}
-            isDelivered={current?.status === 'DELIVERED'}
-            onChange={() => order.reload()}
-          />
+          {isAdministrator && current?.status !== 'DELIVERED' ? (
+            <AssignmentPanel
+              serviceOrderId={serviceOrderId}
+              assignedTechnicianId={current?.assignedTechnicianId}
+              technicianIsActive={current?.technicianIsActive}
+              onChange={() => order.reload()}
+            />
+          ) : null}
           <DiagnosticPanel
             serviceOrderId={serviceOrderId}
-            isDelivered={current?.status === 'DELIVERED'}
+            orderPermissions={current?.permissions}
+            permissions={current?.permissions}
             onChange={() => order.reload()}
           />
           <InterventionPanel
             serviceOrderId={serviceOrderId}
-            isDelivered={current?.status === 'DELIVERED'}
+            orderPermissions={current?.permissions}
+            permissions={current?.permissions}
             onChange={() => order.reload()}
           />
           <StatusHistoryPanel serviceOrderId={serviceOrderId} refreshToken={historyToken} />
