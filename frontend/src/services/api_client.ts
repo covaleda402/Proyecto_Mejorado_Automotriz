@@ -3,7 +3,8 @@
  * session token, the JSON headers, the timeout and the translation of a
  * backend error into a message the user reads live in one place.
  */
-export const API_BASE = '/api';
+const rawBase = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+export const API_BASE = rawBase ? rawBase.replace(/\/+$/, '') : '/api';
 
 const REQUEST_TIMEOUT_MILLISECOND = 15000;
 
