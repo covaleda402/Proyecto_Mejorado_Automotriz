@@ -242,14 +242,42 @@ export function setupBrowserMockApi(): void {
       }
     }
 
+    // Extract Authorization header
+    let authHeader = '';
+    if (init?.headers) {
+      if (init.headers instanceof Headers) {
+        authHeader = init.headers.get('Authorization') || '';
+      } else if (Array.isArray(init.headers)) {
+        const found = init.headers.find(([k]) => k.toLowerCase() === 'authorization');
+        authHeader = found ? found[1] : '';
+      } else if (typeof init.headers === 'object') {
+        const headersObj = init.headers as Record<string, string>;
+        authHeader = headersObj['Authorization'] || headersObj['authorization'] || '';
+      }
+    }
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const isCallerAdmin = token === 'token-admin-session-mock';
+    const isCallerJPerez = token === 'token-jperez-session-mock';
+    const isCallerLRamirez = token === 'token-lramirez-session-mock';
+    const isCallerTechnician = isCallerJPerez || isCallerLRamirez;
+    const callerTechId = isCallerJPerez
+      ? 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+      : isCallerLRamirez
+      ? 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2'
+      : null;
+
     const db = loadDB();
 
     // 1. Session / Auth
     if (pathname === '/api/session' && method === 'POST') {
-      const username = body?.username?.trim();
+      const username = body?.username?.trim().toLowerCase();
       const password = body?.password?.trim();
 
-      if (username === 'admin' && password === 'Admin2026*') {
+      const validSharedPass = ['Admin2026*', 'admin2026*'];
+      const validJPerezPass = [...validSharedPass, 'JPerez2026*', 'jperez2026*'];
+      const validLRamirezPass = [...validSharedPass, 'LRamirez2026*', 'lramirez2026*'];
+
+      if (username === 'admin' && validSharedPass.includes(password)) {
         const session: Session = {
           token: 'token-admin-session-mock',
           expiresAt: new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
@@ -260,7 +288,7 @@ export function setupBrowserMockApi(): void {
         };
         return jsonResponse(session);
       }
-      if (username === 'jperez' && password === 'JPerez2026*') {
+      if (username === 'jperez' && validJPerezPass.includes(password)) {
         const session: Session = {
           token: 'token-jperez-session-mock',
           expiresAt: new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
@@ -271,7 +299,7 @@ export function setupBrowserMockApi(): void {
         };
         return jsonResponse(session);
       }
-      if (username === 'lramirez' && password === 'LRamirez2026*') {
+      if (username === 'lramirez' && validLRamirezPass.includes(password)) {
         const session: Session = {
           token: 'token-lramirez-session-mock',
           expiresAt: new Date(Date.now() + 8 * 3600 * 1000).toISOString(),
@@ -293,8 +321,11 @@ export function setupBrowserMockApi(): void {
       return jsonResponse({ status: 'ok' });
     }
 
-    // 2. Customers
+    // 2. Customers (Administrator only)
     if (pathname === '/api/customer') {
+      if (isCallerTechnician) {
+        return errorResponse(403, 'forbidden', 'No tiene permiso para acceder a clientes.');
+      }
       if (method === 'GET') {
         return jsonResponse(db.customers);
       }
@@ -302,6 +333,9 @@ export function setupBrowserMockApi(): void {
         const { fullName, documentNumber, phone, email } = body as NewCustomer;
         if (!fullName || !documentNumber) {
           return errorResponse(400, 'bad_request', 'Nombre y documento son obligatorios.');
+        }
+        if (/<[a-z][\s\S]*>/i.test(fullName) || /<script/i.test(fullName) || /<script/i.test(documentNumber)) {
+          return errorResponse(400, 'invalid_input', 'Los datos no pueden contener etiquetas HTML o scripts.');
         }
         if (db.customers.some((c) => c.documentNumber === documentNumber)) {
           return errorResponse(409, 'conflict', 'Ya existe un cliente con ese numero de documento.');
@@ -320,8 +354,11 @@ export function setupBrowserMockApi(): void {
       }
     }
 
-    // 3. Vehicles
+    // 3. Vehicles (Administrator only)
     if (pathname === '/api/vehicle') {
+      if (isCallerTechnician) {
+        return errorResponse(403, 'forbidden', 'No tiene permiso para acceder a vehiculos.');
+      }
       if (method === 'GET') {
         return jsonResponse(db.vehicles);
       }
@@ -351,9 +388,12 @@ export function setupBrowserMockApi(): void {
       }
     }
 
-    // 4. Vehicle Timeline
+    // 4. Vehicle Timeline (Administrator only)
     const timelineMatch = pathname.match(/^\/api\/vehicle\/([^/]+)\/timeline$/);
     if (timelineMatch && method === 'GET') {
+      if (isCallerTechnician) {
+        return errorResponse(403, 'forbidden', 'No tiene permiso para ver la linea de tiempo del vehiculo.');
+      }
       const vehicleId = timelineMatch[1];
       const vehicle = db.vehicles.find((v) => v.id === vehicleId);
       if (!vehicle) {
@@ -401,8 +441,11 @@ export function setupBrowserMockApi(): void {
       return jsonResponse(timeline);
     }
 
-    // 5. Technicians
+    // 5. Technicians (Administrator only)
     if (pathname === '/api/technician' && method === 'GET') {
+      if (isCallerTechnician) {
+        return errorResponse(403, 'forbidden', 'No tiene permiso para ver la lista de tecnicos.');
+      }
       const updatedTechnicians = db.technicians.map((tech) => {
         const activeAssignment = db.assignments.find((a) => a.technicianId === tech.id && a.isActive);
         if (activeAssignment) {
@@ -431,6 +474,12 @@ export function setupBrowserMockApi(): void {
       if (method === 'GET') {
         const filterStatus = searchParams.get('status');
         let result = db.orders;
+        if (isCallerTechnician && callerTechId) {
+          const assignedIds = new Set(
+            db.assignments.filter((a) => a.technicianId === callerTechId && a.isActive).map((a) => a.serviceOrderId),
+          );
+          result = result.filter((o) => assignedIds.has(o.id));
+        }
         if (filterStatus) {
           result = result.filter((o) => o.status === filterStatus);
         }
@@ -478,6 +527,14 @@ export function setupBrowserMockApi(): void {
       if (!order) {
         return errorResponse(404, 'not_found', 'Orden no encontrada.');
       }
+      if (isCallerTechnician && callerTechId) {
+        const isAssigned = db.assignments.some(
+          (a) => a.serviceOrderId === orderId && a.technicianId === callerTechId && a.isActive,
+        );
+        if (!isAssigned) {
+          return errorResponse(403, 'forbidden', 'Esta orden no esta asignada a su usuario.');
+        }
+      }
       return jsonResponse(order);
     }
 
@@ -489,6 +546,15 @@ export function setupBrowserMockApi(): void {
       const order = db.orders.find((o) => o.id === orderId);
       if (!order) {
         return errorResponse(404, 'not_found', 'Orden no encontrada.');
+      }
+      if (order.status === 'DELIVERED') {
+        return errorResponse(403, 'forbidden', 'No se puede modificar una orden que ya fue entregada.');
+      }
+      if (isCallerTechnician && callerTechId) {
+        const activeAss = db.assignments.find((a) => a.serviceOrderId === orderId && a.isActive);
+        if (!activeAss || activeAss.technicianId !== callerTechId) {
+          return errorResponse(403, 'forbidden', 'Solo el tecnico asignado puede cambiar el estado de la orden.');
+        }
       }
 
       const prevStatus = order.status;
@@ -507,7 +573,7 @@ export function setupBrowserMockApi(): void {
         id: crypto.randomUUID ? crypto.randomUUID() : 't-' + Date.now(),
         fromStatus: prevStatus,
         toStatus: nextStatus,
-        changedByName: 'Administrador del taller',
+        changedByName: isCallerAdmin ? 'Administrador del taller' : 'Tecnico asignado',
         changedAt: new Date().toISOString(),
       });
 
@@ -536,6 +602,13 @@ export function setupBrowserMockApi(): void {
         return jsonResponse(assignment);
       }
       if (method === 'POST') {
+        if (isCallerTechnician) {
+          return errorResponse(403, 'forbidden', 'Solo el jefe de taller puede asignar tecnicos.');
+        }
+        const order = db.orders.find((o) => o.id === orderId);
+        if (order?.status === 'DELIVERED') {
+          return errorResponse(403, 'forbidden', 'No se puede reasignar una orden entregada.');
+        }
         const { technicianId } = body || {};
         const tech = db.technicians.find((t) => t.id === technicianId);
         if (!tech) {
@@ -557,7 +630,6 @@ export function setupBrowserMockApi(): void {
         db.assignments.push(newAssignment);
 
         // Update technician name on order
-        const order = db.orders.find((o) => o.id === orderId);
         if (order) {
           order.technicianName = tech.fullName;
           order.updatedAt = new Date().toISOString();
@@ -580,6 +652,16 @@ export function setupBrowserMockApi(): void {
         return jsonResponse(diagnostic);
       }
       if (method === 'POST') {
+        const order = db.orders.find((o) => o.id === orderId);
+        if (order?.status === 'DELIVERED') {
+          return errorResponse(403, 'forbidden', 'No se puede registrar diagnostico en una orden entregada.');
+        }
+        if (isCallerTechnician && callerTechId) {
+          const activeAss = db.assignments.find((a) => a.serviceOrderId === orderId && a.isActive);
+          if (!activeAss || activeAss.technicianId !== callerTechId) {
+            return errorResponse(403, 'forbidden', 'Solo el tecnico asignado puede registrar diagnosticos.');
+          }
+        }
         const { finding, componentToRepair } = body || {};
         const assignment = db.assignments.find((a) => a.serviceOrderId === orderId && a.isActive);
         const newDiagnostic: Diagnostic = {
@@ -605,6 +687,16 @@ export function setupBrowserMockApi(): void {
         return jsonResponse(list);
       }
       if (method === 'POST') {
+        const order = db.orders.find((o) => o.id === orderId);
+        if (order?.status === 'DELIVERED') {
+          return errorResponse(403, 'forbidden', 'No se puede registrar intervencion en una orden entregada.');
+        }
+        if (isCallerTechnician && callerTechId) {
+          const activeAss = db.assignments.find((a) => a.serviceOrderId === orderId && a.isActive);
+          if (!activeAss || activeAss.technicianId !== callerTechId) {
+            return errorResponse(403, 'forbidden', 'Solo el tecnico asignado puede registrar intervenciones.');
+          }
+        }
         const { description, laborHourCount, part } = body || {};
         const assignment = db.assignments.find((a) => a.serviceOrderId === orderId && a.isActive);
         const newIntervention: Intervention = {
@@ -622,8 +714,11 @@ export function setupBrowserMockApi(): void {
       }
     }
 
-    // 13. Warranties
+    // 13. Warranties (Administrator only)
     if (pathname === '/api/warranty') {
+      if (isCallerTechnician) {
+        return errorResponse(403, 'forbidden', 'No tiene permiso para acceder a garantias.');
+      }
       if (method === 'GET') {
         return jsonResponse(db.warranties);
       }
